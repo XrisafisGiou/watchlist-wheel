@@ -11,7 +11,7 @@ export function filmUrl(input) {
  if(url.origin!=='https://letterboxd.com'||url.username||url.password||!/^\/film\/[\w-]+\/$/.test(url.pathname))throw Error('Invalid movie URL.');
  return url.origin+url.pathname;
 }
-export function parsePage(html) {
+export function parsePage(html,search=false) {
  const root=parseDocument(html);const elements=getElementsByTagName('*',root,true);const movies=new Map();let pages=1,nextPage=null;
  for(const element of elements){
   const a=element.attribs||{};
@@ -26,7 +26,7 @@ export function parsePage(html) {
    if((a.class||'').split(' ').includes('next'))nextPage=number;
   }
  }
- if(!movies.size&&!/watchlist/i.test(textContent(getElementsByTagName('title',root,true)[0]||root)))throw Error('Letterboxd returned an unreadable watchlist.');
+ if(!movies.size&&!(search?/search/i:/watchlist/i).test(textContent(getElementsByTagName('title',root,true)[0]||root)))throw Error('Letterboxd returned an unreadable page.');
  return{movies:[...movies.values()],pages,nextPage};
 }
 export function parseRuntime(html){

@@ -12,6 +12,7 @@ A simple movie picker for public Letterboxd watchlists.
 - Optionally filter by maximum duration, genre, and one or more decades. Genre and decade buttons cycle through include, exclude, and neutral; exclusions take priority. Apply updates both the grid and wheel. All decades from the 2020s down to the 1850s are available, using release years already loaded with the watchlist.
 - Spin once or play elimination, with animation and sound effects. Elimination has Quick, Normal, and Dramatic speeds with an updated time estimate. The speed preference is remembered in your browser. Spin again repeats the chosen mode and speed.
 - Draw a three-film shortlist from the current filtered or selected pool. All three are different, their posters load before the reveal, and you can choose one or draw again. This mode needs at least three eligible movies.
+- Search for movies from **Add movies** after opening a profile, then add them temporarily to the session. Additions follow the current filters and join an active selection when eligible. They can be removed with the × on their poster and are never written into saved watchlists or shared-profile membership.
 - Load page posters before displaying the grid and load the winner's poster before revealing the result.
 - Import a Letterboxd watchlist CSV.
 
@@ -47,3 +48,5 @@ The build generates `public/` and `server/assets.js`; these are intentionally ig
 - `test/`: parser and API tests with a public HTML fixture.
 
 Saved profiles are browser-specific and do not sync across devices or hostnames. This project is not affiliated with Letterboxd.
+
+Temporary movies disappear when you reopen or refresh a profile or reload the page. Poster and metadata caches may remain, but movie membership is session-only. Search uses Letterboxd when available and falls back to Wikidata items with Letterboxd film identifiers when direct search is blocked; fallback results are labeled and may not cover every Letterboxd title.

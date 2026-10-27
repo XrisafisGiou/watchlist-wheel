@@ -28,7 +28,7 @@
     <section id="saved-profiles" class="saved-profiles" hidden><div class="profiles-heading"><h2>Saved profiles</h2><button id="select-profiles" class="text-button" aria-pressed="false" hidden>Select profiles</button></div><div id="profile-list"></div><button id="open-common" class="primary" disabled hidden>Open common movies</button></section>
   </main>
   <main id="library" class="library" hidden>
-    <div class="library-heading"><h1 id="library-description"></h1><div class="library-actions"><button id="refresh" class="quiet">Refresh</button><button id="change" class="quiet">Profiles</button></div></div>
+    <div class="library-heading"><h1 id="library-description"></h1><div class="library-actions"><button id="add-movies" class="quiet">Add movies</button><button id="refresh" class="quiet">Refresh</button><button id="change" class="quiet">Profiles</button></div></div>
     <div id="poster-warning" class="notice" hidden><span id="poster-warning-text"></span><button id="retry-posters" class="text-button">Retry</button></div>
     <div class="workspace">
       <section class="collection" aria-label="Movies">
@@ -59,6 +59,7 @@
       </aside>
     </div>
   </main>
+  <dialog id="movie-search-dialog" class="modal movie-search-modal" aria-labelledby="movie-search-title"><button class="modal-close quiet" id="close-movie-search" aria-label="Close movie search">×</button><h2 id="movie-search-title">Add movies</h2><p>Session only</p><form id="movie-search-form" class="movie-search-form"><input id="movie-query" type="search" required minlength="2" maxlength="100" placeholder="Movie title…" aria-label="Search Letterboxd movies" autocomplete="off"><button id="movie-search-submit" class="primary">Search</button></form><p id="movie-search-status" role="status" hidden></p><a id="movie-search-source" class="search-source" href="https://www.wikidata.org/wiki/Property:P6127" target="_blank" rel="noopener noreferrer" hidden>Results via Wikidata</a><div id="movie-search-results" class="movie-search-results"></div></dialog>
   <dialog id="delete-profile-dialog" class="modal" aria-labelledby="delete-profile-title"><h2 id="delete-profile-title">Delete profile?</h2><p id="delete-profile-name"></p><div class="delete-actions"><button id="cancel-delete-profile" class="quiet" autofocus>Cancel</button><button id="confirm-delete-profile" class="primary">Delete</button></div></dialog>
   <dialog id="mode-dialog" class="modal">
     <button class="modal-close quiet" id="close-mode" aria-label="Close">×</button><h2>Spin mode</h2><p id="mode-description"></p>

@@ -1,16 +1,17 @@
 import {watchlistUrl,filmUrl,parsePage,parseMetadata} from './parse.js';
 import {assets} from './assets.js';
+import {searchMovies} from './search.js';
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json; charset=utf-8','x-content-type-options':'nosniff','cache-control':'no-store'}});
-async function remote(url,image=false,fresh=false){
+async function remote(url,image=false,fresh=false,timeout=20000){
  for(let redirect=0;redirect<4;redirect++){
-  const response=await fetch(url,{redirect:'manual',cache:fresh?'no-store':'default',signal:AbortSignal.timeout(20000),headers:{Accept:image?'image/*':'text/html','User-Agent':'Mozilla/5.0 (compatible; WatchlistWheel/1.1; public watchlist reader)',...(fresh?{'Cache-Control':'no-cache','Pragma':'no-cache'}:{})}});
+  const response=await fetch(url,{redirect:'manual',cache:fresh?'no-store':'default',signal:AbortSignal.timeout(timeout),headers:{Accept:image?'image/*':'text/html','User-Agent':'Mozilla/5.0 (compatible; WatchlistWheel/1.1; public watchlist reader)',...(fresh?{'Cache-Control':'no-cache','Pragma':'no-cache'}:{})}});
   if(response.status>=300&&response.status<400){const next=new URL(response.headers.get('location'),url);if(image?!['https://a.ltrbxd.com','https://s.ltrbxd.com'].includes(next.origin):next.origin!=='https://letterboxd.com')throw Error('Unexpected redirect.');url=next.href;continue;}
   if(!response.ok)throw Error([403,429].includes(response.status)?'Letterboxd is limiting requests. Try again later or import CSV.':response.status===404?'Watchlist or movie not found.':`Letterboxd returned ${response.status}.`);
   return response;
  }
  throw Error('Too many redirects.');
 }
-async function html(url,fresh=false){const value=await(await remote(url,false,fresh)).text();if(/Just a moment|cf-chl-|Verify you are human/i.test(value))throw Error('Letterboxd requires verification. Try later or import CSV.');return value;}
+async function html(url,fresh=false,timeout=20000){const value=await(await remote(url,false,fresh,timeout)).text();if(/Just a moment|cf-chl-|Verify you are human/i.test(value))throw Error('Letterboxd requires verification. Try later or import CSV.');return value;}
 const movieCache=new Map();const movieRequests=new Map();
 async function movieMetadata(film){
  const saved=movieCache.get(film);if(saved&&saved.expires>Date.now())return saved.value;
@@ -28,6 +29,8 @@ async function api(request,ctx){
   const parsed=parsePage(await html(page===1?base:base+'page/'+page+'/',true));
   response=json({...parsed,username:new URL(base).pathname.split('/')[1],url:base});ttl=0;
   response.headers.set('vercel-cdn-cache-control','no-store');response.headers.set('cdn-cache-control','no-store');
+ }else if(url.pathname==='/api/search'){
+  response=json(await searchMovies(url.searchParams.get('q'),target=>html(target,false,6000)));
  }else if(url.pathname==='/api/poster'||url.pathname==='/api/metadata'){
   const film=filmUrl(url.searchParams.get('url')||'');const metadata=await movieMetadata(film);if(url.pathname==='/api/poster'&&!metadata.url)throw Error('No poster available.');response=json(metadata);ttl=86400;
  }else if(url.pathname==='/api/runtime'){
