@@ -4,6 +4,8 @@ const desktop = window.desktop;
 let collection = null;
 let profiles = [];
 let deletingProfile = false;
+let pendingProfileDelete = null;
+let lastSpinMode = null;
 let selectingProfiles = false;
 const selectedProfiles = new Set();
 let selected = new Set();
@@ -268,17 +270,17 @@ function renderProfiles() {
       renderProfiles();
     });
     const remove = document.createElement('button'); remove.className = 'delete-profile'; remove.textContent = '×'; remove.title = 'Delete profile'; remove.setAttribute('aria-label', `Delete ${profile.username} profile`); remove.disabled = importing || deletingProfile;
-    remove.addEventListener('click', async () => {
+    remove.addEventListener('click', () => {
       if (importing || deletingProfile) return;
-      deletingProfile = true; renderProfiles();
-      try { await invoke('deleteProfile', profile.profileId); selectedProfiles.delete(profile.profileId); await loadProfiles(); }
-      catch (error) { toast(error.message); }
-      finally { deletingProfile = false; renderProfiles(); }
+      pendingProfileDelete = profile;
+      $('delete-profile-name').textContent = profile.username;
+      $('delete-profile-dialog').showModal();
     });
     row.append(button, remove); return row;
   }));
 }
 async function openCollection(value) {
+  lastSpinMode = null;
   collection = value; selected = new Set(); pageNumber = 1; maxRuntime = null;
   draftGenres.clear(); appliedGenres.clear(); draftExcludedGenres.clear(); appliedExcludedGenres.clear(); renderGenres();
   $('genre-section').open = false;
@@ -377,6 +379,8 @@ function animateSpin(movies, index, duration) {
   });
 }
 async function startSpin(mode) {
+  if (busy || gridLoading || !wheelPool.length || !['single', 'elimination'].includes(mode)) return;
+  lastSpinMode = mode;
   $('mode-dialog').close(); initAudio(); resetRounds(); setBusy(true); stopped = false;
   const run = ++generation; const contenders = [...wheelPool]; let round = 0;
   $('round-status').hidden = false;
@@ -432,6 +436,16 @@ async function showWinner(movie) {
 $('sound').addEventListener('click', () => { sound = !sound; setSound(); initAudio(); tone(660, .1); }); setSound();
 $('home').addEventListener('click', event => { event.preventDefault(); goHome(); });
 $('change').addEventListener('click', goHome);
+$('cancel-delete-profile').addEventListener('click', () => $('delete-profile-dialog').close());
+$('delete-profile-dialog').addEventListener('close', () => { pendingProfileDelete = null; });
+$('confirm-delete-profile').addEventListener('click', async () => {
+  if (!pendingProfileDelete || importing || deletingProfile) return;
+  const profile = pendingProfileDelete; pendingProfileDelete = null;
+  $('delete-profile-dialog').close(); deletingProfile = true; renderProfiles();
+  try { await invoke('deleteProfile', profile.profileId); selectedProfiles.delete(profile.profileId); await loadProfiles(); }
+  catch (error) { toast(error.message); }
+  finally { deletingProfile = false; renderProfiles(); }
+});
 $('max-runtime').addEventListener('input', () => { $('runtime-value').textContent = $('max-runtime').value + ' min'; });
 $('enable-duration').addEventListener('change', () => { $('duration-slider').hidden = !$('enable-duration').checked; if (!$('enable-duration').checked && !draftGenres.size && !draftExcludedGenres.size && (maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size)) clearFilters(); else syncApplyVisibility(); });
 $('apply-runtime').addEventListener('click', () => applyRuntime().catch(error => toast(error.message)));
@@ -460,7 +474,7 @@ $('single').addEventListener('click', () => startSpin('single'));
 $('elimination').addEventListener('click', () => startSpin('elimination'));
 $('stop').addEventListener('click', () => { stopped = true; $('stop').disabled = true; $('stop').textContent = 'Stopping after this spin…'; setTimeout(() => { $('stop').disabled = false; $('stop').textContent = 'Stop elimination'; }, 3500); });
 $('close-winner').addEventListener('click', () => $('winner-dialog').close());
-$('again').addEventListener('click', () => { $('winner-dialog').close(); resetRounds(); updateSelection(); modePrompt(); });
+$('again').addEventListener('click', () => { if (busy || gridLoading) return; $('winner-dialog').close(); updateSelection(); startSpin(lastSpinMode || 'single'); });
 $('open-winner').addEventListener('click', () => invoke('openFilm', winner.url).catch(error => toast(error.message)));
 document.addEventListener('keydown', event => {
   if (event.key === '/' && !$('library').hidden && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !$('mode-dialog').open && !$('winner-dialog').open && !busy) { event.preventDefault(); $('search').focus(); }
