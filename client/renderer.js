@@ -1,4 +1,4 @@
-import { randomIndex, landingRotation, poolFor } from './wheel.js';
+import { randomIndex, landingRotation, poolFor, decadeFor, eliminationTiming } from './wheel.js';
 const $ = id => document.getElementById(id);
 const desktop = window.desktop;
 let collection = null;
@@ -6,6 +6,9 @@ let profiles = [];
 let deletingProfile = false;
 let pendingProfileDelete = null;
 let lastSpinMode = null;
+let lastSpinSpeed = 'normal';
+const savedEliminationSpeed = localStorage.getItem('wheel-elimination-speed');
+$('elimination-speed').value = ['quick','normal','dramatic'].includes(savedEliminationSpeed) ? savedEliminationSpeed : 'normal';
 let lastSort = 'original';
 let selectingProfiles = false;
 const selectedProfiles = new Set();
@@ -33,12 +36,20 @@ const draftGenres = new Set();
 let appliedGenres = new Set();
 const draftExcludedGenres = new Set();
 let appliedExcludedGenres = new Set();
+const draftDecades = new Set();
+let appliedDecades = new Set();
+function hasDraftFilters() { return $('enable-duration').checked || draftGenres.size || draftExcludedGenres.size || draftDecades.size; }
+function hasAppliedFilters() { return maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size || appliedDecades.size; }
 function syncApplyVisibility() {
-  $('apply-runtime').hidden = !$('enable-duration').checked && !draftGenres.size && !draftExcludedGenres.size && !filteringRuntime;
+  $('apply-runtime').hidden = !hasDraftFilters() && !filteringRuntime;
+}
+function syncDraftFilters() {
+  if (!hasDraftFilters() && hasAppliedFilters()) clearFilters(); else syncApplyVisibility();
 }
 function clearFilters() {
   if (busy || gridLoading) return;
   maxRuntime = null; appliedGenres.clear(); draftGenres.clear(); appliedExcludedGenres.clear(); draftExcludedGenres.clear(); renderGenres();
+  draftDecades.clear(); appliedDecades.clear(); renderDecades();
   $('enable-duration').checked = false; $('duration-slider').hidden = true;
   pageNumber = 1; $('clear-runtime').hidden = true; $('runtime-status').hidden = true;
   syncApplyVisibility(); resetRounds(); renderGrid();
@@ -59,12 +70,26 @@ function renderGenres() {
       else if (draftExcludedGenres.has(genre)) draftExcludedGenres.delete(genre);
       else draftGenres.add(genre);
       updateButton();
-      if (!$('enable-duration').checked && !draftGenres.size && !draftExcludedGenres.size && (maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size)) clearFilters(); else syncApplyVisibility();
+      syncDraftFilters();
     });
     return button;
   }));
 }
 renderGenres();
+function renderDecades() {
+  const decades = [...new Set(collection.movies.map(decadeFor).filter(value => value !== null))].sort((a,b) => b-a);
+  $('decade-section').hidden = !decades.length;
+  $('decade-buttons').replaceChildren(...decades.map(decade => {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'genre-button decade-button'; button.textContent = `${decade}s`;
+    button.setAttribute('aria-pressed', String(draftDecades.has(decade)));
+    button.addEventListener('click', () => {
+      if (busy || gridLoading) return;
+      if (draftDecades.has(decade)) draftDecades.delete(decade); else draftDecades.add(decade);
+      button.setAttribute('aria-pressed', String(draftDecades.has(decade))); syncDraftFilters();
+    });
+    return button;
+  }));
+}
 const palette = ['#c7a36a', '#45635c', '#b16f50', '#768776', '#877552', '#4b6168', '#bb9d78', '#6c7870'];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -130,7 +155,7 @@ function drawWheel(canvas, movies, angle = 0) {
 }
 
 function eligibleMovies() {
-  return collection.movies.filter(movie => (maxRuntime === null || (Number.isFinite(movie.runtime) && movie.runtime > 0 && movie.runtime <= maxRuntime)) && (!appliedGenres.size || movie.genres?.some(genre => appliedGenres.has(genre))) && !movie.genres?.some(genre => appliedExcludedGenres.has(genre)));
+  return collection.movies.filter(movie => (maxRuntime === null || (Number.isFinite(movie.runtime) && movie.runtime > 0 && movie.runtime <= maxRuntime)) && (!appliedGenres.size || movie.genres?.some(genre => appliedGenres.has(genre))) && !movie.genres?.some(genre => appliedExcludedGenres.has(genre)) && (!appliedDecades.size || appliedDecades.has(decadeFor(movie))));
 }
 function visibleMovies() {
   const query = $('search').value.toLocaleLowerCase().trim();
@@ -150,8 +175,8 @@ function visibleMovies() {
   return movies;
 }
 function showFilterStatus() {
-  $('runtime-status').hidden = maxRuntime === null && !appliedGenres.size && !appliedExcludedGenres.size;
-  $('runtime-status').textContent = [maxRuntime !== null ? `Up to ${maxRuntime} min` : '', [...appliedGenres].join(', '), appliedExcludedGenres.size ? 'Exclude ' + [...appliedExcludedGenres].join(', ') : ''].filter(Boolean).join(' · ');
+  $('runtime-status').hidden = !hasAppliedFilters();
+  $('runtime-status').textContent = [maxRuntime !== null ? `Up to ${maxRuntime} min` : '', [...appliedGenres].join(', '), appliedExcludedGenres.size ? 'Exclude ' + [...appliedExcludedGenres].join(', ') : '', [...appliedDecades].sort((a,b)=>b-a).map(decade=>`${decade}s`).join(', ')].filter(Boolean).join(' · ');
 }
 async function sortCollection() {
   if (busy || gridLoading) { $('sort').value = lastSort; return; }
@@ -268,7 +293,7 @@ function updateSelection() {
   $('clear-selection').hidden = !selected.size;
   wheelPool = poolFor(eligibleMovies(), selected);
   $('pool-count').textContent = `${wheelPool.length} ${wheelPool.length === 1 ? 'movie' : 'movies'}`;
-  $('pool-type').textContent = selected.size ? 'Selected' : maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size ? 'Filtered movies' : 'All movies';
+  $('pool-type').textContent = selected.size ? 'Selected' : hasAppliedFilters() ? 'Filtered movies' : 'All movies';
   $('enable-duration').disabled = busy || gridLoading;
   $('apply-runtime').disabled = (busy && !filteringRuntime) || gridLoading;
   $('clear-runtime').disabled = busy || gridLoading;
@@ -320,6 +345,7 @@ async function openCollection(value) {
   lastSpinMode = null;
   collection = value; selected = new Set(); pageNumber = 1; maxRuntime = null;
   draftGenres.clear(); appliedGenres.clear(); draftExcludedGenres.clear(); appliedExcludedGenres.clear(); renderGenres();
+  draftDecades.clear(); appliedDecades.clear(); renderDecades(); $('decade-section').open = false;
   $('genre-section').open = false;
   $('enable-duration').checked = false; $('duration-slider').hidden = true;
   syncApplyVisibility();
@@ -363,6 +389,7 @@ function setBusy(value) {
   $('max-runtime').disabled = value;
   $('enable-duration').disabled = value;
   $('genre-filter').disabled = value;
+  $('decade-filter').disabled = value;
   $('apply-runtime').disabled = value && !filteringRuntime;
   $('clear-runtime').disabled = value;
 }
@@ -372,16 +399,17 @@ async function applyRuntime() {
   const limit = $('enable-duration').checked ? Number($('max-runtime').value) : null;
   const chosenGenres = new Set(draftGenres);
   const excludedGenres = new Set(draftExcludedGenres);
+  const chosenDecades = new Set(draftDecades);
   filteringRuntime = true; setBusy(true); $('apply-runtime').textContent = 'Cancel';
   $('runtime-status').hidden = false; $('runtime-status').textContent = 'Loading movie data…';
   try {
     const metadata = limit !== null || chosenGenres.size || excludedGenres.size ? await invoke('loadMetadata', chosenGenres.size > 0 || excludedGenres.size > 0, limit !== null) : [];
     const byId = new Map(metadata.map(movie => [movie.id, movie]));
     collection.movies.forEach(movie => Object.assign(movie, byId.get(movie.id)));
-    maxRuntime = limit; appliedGenres = chosenGenres; appliedExcludedGenres = excludedGenres; pageNumber = 1;
+    maxRuntime = limit; appliedGenres = chosenGenres; appliedExcludedGenres = excludedGenres; appliedDecades = chosenDecades; pageNumber = 1;
     const allowed = new Set(eligibleMovies().map(movie => movie.id));
     selected = new Set([...selected].filter(id => allowed.has(id)));
-    resetRounds(); $('clear-runtime').hidden = limit === null && !chosenGenres.size && !excludedGenres.size;
+    resetRounds(); $('clear-runtime').hidden = !hasAppliedFilters();
     await renderGrid();
   } catch (error) { toast(error.message); }
   finally {
@@ -390,12 +418,21 @@ async function applyRuntime() {
     setBusy(false); updateSelection();
   }
 }
+function updateEliminationEstimate() {
+  let milliseconds = 0;
+  for (let remaining = wheelPool.length, round = 1; remaining > 1; remaining--, round++) {
+    const timing = eliminationTiming(round, remaining, wheelPool.length, $('elimination-speed').value);
+    milliseconds += reducedMotion ? 100 : timing.duration + timing.pause;
+  }
+  const seconds = milliseconds / 1000;
+  $('elimination-estimate').textContent = wheelPool.length > 1 ? `Elimination: ${wheelPool.length - 1} rounds · ~${seconds > 90 ? Math.ceil(seconds / 60) + ' min' : Math.ceil(seconds) + ' sec'}` : '';
+}
 function modePrompt() {
   if (busy || gridLoading || !wheelPool.length) return;
   $('mode-description').textContent = `${wheelPool.length} ${wheelPool.length === 1 ? 'movie' : 'movies'}`;
   $('elimination').disabled = wheelPool.length < 2;
-  const seconds = wheelPool.length > 30 ? (wheelPool.length - 1) * 1.05 + 5 : (wheelPool.length - 1) * 2.5 + 4;
-  $('elimination-estimate').textContent = wheelPool.length > 1 ? `Elimination: ${wheelPool.length - 1} rounds · ~${seconds > 90 ? Math.ceil(seconds / 60) + ' min' : Math.ceil(seconds) + ' sec'}` : '';
+  $('elimination-speed-field').hidden = wheelPool.length < 2;
+  updateEliminationEstimate();
   $('mode-dialog').showModal();
 }
 function animateSpin(movies, index, duration) {
@@ -414,9 +451,10 @@ function animateSpin(movies, index, duration) {
     requestAnimationFrame(frame);
   });
 }
-async function startSpin(mode) {
+async function startSpin(mode, speed = $('elimination-speed').value) {
   if (busy || gridLoading || !wheelPool.length || !['single', 'elimination'].includes(mode)) return;
   lastSpinMode = mode;
+  if (mode === 'elimination') lastSpinSpeed = speed;
   $('mode-dialog').close(); initAudio(); resetRounds(); setBusy(true); stopped = false;
   const run = ++generation; const contenders = [...wheelPool]; let round = 0;
   $('round-status').hidden = false;
@@ -433,8 +471,8 @@ async function startSpin(mode) {
       while (contenders.length > 1 && !stopped && run === generation) {
         $('round-status').textContent = `Round ${++round} of ${total - 1} · ${contenders.length} films remain`;
         const index = randomIndex(contenders.length);
-        const duration = round === 1 ? 3200 : contenders.length <= 3 ? 2600 : total > 30 ? 850 : 1800;
-        await animateSpin(contenders, index, duration);
+        const timing = eliminationTiming(round, contenders.length, total, speed);
+        await animateSpin(contenders, index, timing.duration);
         if (stopped || run !== generation) break;
         const [movie] = contenders.splice(index, 1); eliminated.add(movie.id);
         for (const card of $('movie-grid').children) if (card.dataset.id === movie.id) card.classList.add('eliminated');
@@ -442,7 +480,7 @@ async function startSpin(mode) {
         li.append(number, title); $('elimination-list').append(li); li.scrollIntoView({ block: 'nearest' });
         $('round-status').textContent = `${movie.title} is out · ${contenders.length} ${contenders.length === 1 ? 'film remains' : 'films remain'}`;
         tone(220, .15, 0, 'triangle', .05);
-        await new Promise(resolve => setTimeout(resolve, reducedMotion ? 100 : total > 30 ? 200 : 700));
+        await new Promise(resolve => setTimeout(resolve, reducedMotion ? 100 : timing.pause));
       }
       if (!stopped && run === generation && contenders.length === 1) { drawWheel($('wheel'), contenders, 0); await showWinner(contenders[0]); }
       else { $('round-status').textContent = 'Stopped.'; }
@@ -483,7 +521,7 @@ $('confirm-delete-profile').addEventListener('click', async () => {
   finally { deletingProfile = false; renderProfiles(); }
 });
 $('max-runtime').addEventListener('input', () => { $('runtime-value').textContent = $('max-runtime').value + ' min'; });
-$('enable-duration').addEventListener('change', () => { $('duration-slider').hidden = !$('enable-duration').checked; if (!$('enable-duration').checked && !draftGenres.size && !draftExcludedGenres.size && (maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size)) clearFilters(); else syncApplyVisibility(); });
+$('enable-duration').addEventListener('change', () => { $('duration-slider').hidden = !$('enable-duration').checked; syncDraftFilters(); });
 $('apply-runtime').addEventListener('click', () => applyRuntime().catch(error => toast(error.message)));
 $('clear-runtime').addEventListener('click', clearFilters);
 $('select-profiles').addEventListener('click', () => { if (importing) return; selectingProfiles = !selectingProfiles; selectedProfiles.clear(); renderProfiles(); });
@@ -508,9 +546,10 @@ $('spin').addEventListener('click', modePrompt);
 $('close-mode').addEventListener('click', () => $('mode-dialog').close());
 $('single').addEventListener('click', () => startSpin('single'));
 $('elimination').addEventListener('click', () => startSpin('elimination'));
+$('elimination-speed').addEventListener('change', () => { localStorage.setItem('wheel-elimination-speed', $('elimination-speed').value); updateEliminationEstimate(); });
 $('stop').addEventListener('click', () => { stopped = true; $('stop').disabled = true; $('stop').textContent = 'Stopping after this spin…'; setTimeout(() => { $('stop').disabled = false; $('stop').textContent = 'Stop elimination'; }, 3500); });
 $('close-winner').addEventListener('click', () => $('winner-dialog').close());
-$('again').addEventListener('click', () => { if (busy || gridLoading) return; $('winner-dialog').close(); updateSelection(); startSpin(lastSpinMode || 'single'); });
+$('again').addEventListener('click', () => { if (busy || gridLoading) return; $('winner-dialog').close(); updateSelection(); startSpin(lastSpinMode || 'single', lastSpinSpeed); });
 $('open-winner').addEventListener('click', () => invoke('openFilm', winner.url).catch(error => toast(error.message)));
 document.addEventListener('keydown', event => {
   if (event.key === '/' && !$('library').hidden && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !$('mode-dialog').open && !$('winner-dialog').open && !busy) { event.preventDefault(); $('search').focus(); }

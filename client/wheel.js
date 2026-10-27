@@ -16,3 +16,12 @@ export function landingRotation(current, index, count, turns = 5) {
 export function poolFor(movies, selected) {
   return selected.size ? movies.filter(movie => selected.has(movie.id)) : [...movies];
 }
+export function decadeFor(movie) {
+  const year = Number(movie.year);
+  return Number.isInteger(year) && year > 0 ? Math.floor(year / 10) * 10 : null;
+}
+export function eliminationTiming(round, remaining, total, speed = 'normal') {
+  const factor = speed === 'quick' ? .45 : speed === 'dramatic' ? 1.8 : 1;
+  const duration = round === 1 ? 3200 : remaining <= 3 ? 2600 : total > 30 ? 850 : 1800;
+  return {duration:Math.round(duration * factor), pause:Math.round((total > 30 ? 200 : 700) * factor)};
+}

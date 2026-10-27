@@ -35,6 +35,7 @@
         <label class="duration-toggle" for="enable-duration"><input id="enable-duration" type="checkbox" aria-controls="duration-slider">Max Duration</label>
         <div id="duration-slider" class="runtime-filter" hidden><input id="max-runtime" aria-label="Maximum duration in minutes" type="range" min="30" max="360" step="5" value="180"><output id="runtime-value" for="max-runtime">180 min</output></div>
         <details id="genre-section" class="genre-section"><summary>Genres</summary><fieldset id="genre-filter" class="genre-filter" aria-label="Genres"><div id="genre-buttons" class="genre-buttons"></div></fieldset></details>
+        <details id="decade-section" class="genre-section"><summary>Decades</summary><fieldset id="decade-filter" class="genre-filter" aria-label="Decades"><div id="decade-buttons" class="genre-buttons"></div></fieldset></details>
         <div class="filter-actions"><button id="apply-runtime" class="quiet" hidden>Apply</button><button id="clear-runtime" class="text-button" hidden>Clear</button></div>
         <p id="runtime-status" class="runtime-status" role="status" hidden></p>
         <div class="selection-toolbar"><span id="showing"></span><div><button id="select-visible" class="text-button">Select results</button><button id="clear-selection" class="text-button" hidden>Clear selection</button></div></div>
@@ -60,7 +61,7 @@
   <dialog id="mode-dialog" class="modal">
     <button class="modal-close quiet" id="close-mode" aria-label="Close">×</button><h2>Spin mode</h2><p id="mode-description"></p>
     <div class="mode-options"><button class="mode-card" id="single"><strong>Single spin</strong><span>Pick one movie.</span></button><button class="mode-card" id="elimination"><strong>Elimination</strong><span>Last movie remaining wins.</span></button></div>
-    <p id="elimination-estimate"></p>
+    <div id="elimination-speed-field" class="elimination-speed"><label for="elimination-speed">Elimination speed</label><select id="elimination-speed"><option value="quick">Quick</option><option value="normal" selected>Normal</option><option value="dramatic">Dramatic</option></select></div><p id="elimination-estimate"></p>
   </dialog>
   <dialog id="winner-dialog" class="modal winner-modal"><button class="modal-close quiet" id="close-winner" aria-label="Close">×</button><h2>Your movie</h2><div id="winner-poster" class="winner-poster"></div><h3><a id="winner-title" target="_blank" rel="noopener noreferrer"></a></h3><p id="winner-year"></p><button id="open-winner" class="primary">Letterboxd ↗</button><button id="again" class="quiet">Spin again</button></dialog>
   <div id="toast" class="toast" role="status" hidden></div>
