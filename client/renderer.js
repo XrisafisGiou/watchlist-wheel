@@ -137,6 +137,11 @@ function visibleMovies() {
   const movies = eligibleMovies().filter(movie => `${movie.title} ${movie.year}`.toLocaleLowerCase().includes(query));
   if ($('sort').value === 'title') movies.sort((a,b) => a.title.localeCompare(b.title));
   if ($('sort').value === 'year') movies.sort((a,b) => Number(b.year) - Number(a.year) || a.title.localeCompare(b.title));
+  if ($('sort').value === 'year-asc') movies.sort((a,b) => {
+    const aYear = Number(a.year); const bYear = Number(b.year);
+    if (!(aYear > 0) || !(bYear > 0)) return aYear > 0 ? -1 : bYear > 0 ? 1 : a.title.localeCompare(b.title);
+    return aYear - bYear || a.title.localeCompare(b.title);
+  });
   if ($('sort').value.startsWith('duration-')) movies.sort((a,b) => {
     const aKnown = Number.isFinite(a.runtime) && a.runtime > 0; const bKnown = Number.isFinite(b.runtime) && b.runtime > 0;
     if (!aKnown || !bKnown) return aKnown ? -1 : bKnown ? 1 : a.title.localeCompare(b.title);
