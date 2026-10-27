@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Watchlist Wheel</title>
+  <rect width="64" height="64" rx="12" fill="#101719"/>
+  <path d="M32 34V10A24 24 0 0 1 52.78 22Z" fill="#c7a36a"/>
+  <path d="M32 34 52.78 22A24 24 0 0 1 52.78 46Z" fill="#45635c"/>
+  <path d="M32 34 52.78 46A24 24 0 0 1 32 58Z" fill="#b16f50"/>
+  <path d="M32 34V58A24 24 0 0 1 11.22 46Z" fill="#768776"/>
+  <path d="M32 34 11.22 46A24 24 0 0 1 11.22 22Z" fill="#877552"/>
+  <path d="M32 34 11.22 22A24 24 0 0 1 32 10Z" fill="#4b6168"/>
+  <circle cx="32" cy="34" r="24" fill="none" stroke="#efca89" stroke-width="2.5"/>
+  <circle cx="32" cy="34" r="6" fill="#101719" stroke="#efca89" stroke-width="2"/>
+  <path d="M27 4H37L32 16Z" fill="#efca89" stroke="#101719" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>
