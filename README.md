@@ -8,7 +8,7 @@ A simple movie picker for public Letterboxd watchlists.
 
 - Enter a Letterboxd username or watchlist URL and save or delete profiles in your browser. Deleting a profile asks for confirmation.
 - Open multiple saved profiles to find movies common to all of them.
-- Browse 36 movies per page, search, sort, and select movies across pages. Runtimes appear beside release years; movie titles link to Letterboxd in a new tab.
+- Browse 36 movies per page, search, sort by title, year, or duration (shortest or longest first), and select movies across pages. Runtimes appear beside release years; movie titles link to Letterboxd in a new tab. Unknown durations sort last.
 - Optionally filter by maximum duration and genre. Genre buttons cycle through include, exclude, and neutral; exclusions take priority. Apply updates both the grid and wheel.
 - Spin once or play elimination, with animation and sound effects. Spin again repeats the chosen mode.
 - Load page posters before displaying the grid and load the winner's poster before revealing the result.

@@ -6,6 +6,7 @@ let profiles = [];
 let deletingProfile = false;
 let pendingProfileDelete = null;
 let lastSpinMode = null;
+let lastSort = 'original';
 let selectingProfiles = false;
 const selectedProfiles = new Set();
 let selected = new Set();
@@ -136,7 +137,32 @@ function visibleMovies() {
   const movies = eligibleMovies().filter(movie => `${movie.title} ${movie.year}`.toLocaleLowerCase().includes(query));
   if ($('sort').value === 'title') movies.sort((a,b) => a.title.localeCompare(b.title));
   if ($('sort').value === 'year') movies.sort((a,b) => Number(b.year) - Number(a.year) || a.title.localeCompare(b.title));
+  if ($('sort').value.startsWith('duration-')) movies.sort((a,b) => {
+    const aKnown = Number.isFinite(a.runtime) && a.runtime > 0; const bKnown = Number.isFinite(b.runtime) && b.runtime > 0;
+    if (!aKnown || !bKnown) return aKnown ? -1 : bKnown ? 1 : a.title.localeCompare(b.title);
+    return (a.runtime - b.runtime) * ($('sort').value === 'duration-asc' ? 1 : -1) || a.title.localeCompare(b.title);
+  });
   return movies;
+}
+function showFilterStatus() {
+  $('runtime-status').hidden = maxRuntime === null && !appliedGenres.size && !appliedExcludedGenres.size;
+  $('runtime-status').textContent = [maxRuntime !== null ? `Up to ${maxRuntime} min` : '', [...appliedGenres].join(', '), appliedExcludedGenres.size ? 'Exclude ' + [...appliedExcludedGenres].join(', ') : ''].filter(Boolean).join(' · ');
+}
+async function sortCollection() {
+  if (busy || gridLoading) { $('sort').value = lastSort; return; }
+  const order = $('sort').value;
+  if (!order.startsWith('duration-')) { lastSort = order; pageNumber = 1; await renderGrid(); return; }
+  filteringRuntime = true; setBusy(true); syncApplyVisibility(); $('apply-runtime').textContent = 'Cancel';
+  $('runtime-status').hidden = false; $('runtime-status').textContent = 'Loading movie data…';
+  try {
+    const metadata = await invoke('loadMetadata', false, true);
+    const byId = new Map(metadata.map(movie => [movie.id, movie]));
+    collection.movies.forEach(movie => Object.assign(movie, byId.get(movie.id)));
+    lastSort = order; pageNumber = 1; await renderGrid();
+  } catch (error) { $('sort').value = lastSort; toast(error.message); }
+  finally {
+    filteringRuntime = false; $('apply-runtime').textContent = 'Apply'; syncApplyVisibility(); showFilterStatus(); setBusy(false); updateSelection();
+  }
 }
 function movieDetails(movie) {
   const minutes = Number.isFinite(movie.runtime) && movie.runtime > 0 ? movie.runtime : 0;
@@ -294,7 +320,7 @@ async function openCollection(value) {
   syncApplyVisibility();
   $('max-runtime').value = '180'; $('runtime-value').textContent = '180 min';
   $('runtime-status').hidden = true; $('clear-runtime').hidden = true;
-  $('search').value = ''; $('sort').value = 'original';
+  $('search').value = ''; $('sort').value = 'original'; lastSort = 'original';
   $('library-description').textContent = value.username;
   $('refresh').hidden = !value.url;
   $('empty-watchlist').textContent = value.profileIds ? 'No common movies.' : 'Watchlist is empty.';
@@ -355,8 +381,7 @@ async function applyRuntime() {
   } catch (error) { toast(error.message); }
   finally {
     filteringRuntime = false; $('apply-runtime').textContent = 'Apply';
-    $('runtime-status').hidden = maxRuntime === null && !appliedGenres.size && !appliedExcludedGenres.size;
-    $('runtime-status').textContent = [maxRuntime !== null ? `Up to ${maxRuntime} min` : '', [...appliedGenres].join(', '), appliedExcludedGenres.size ? 'Exclude ' + [...appliedExcludedGenres].join(', ') : ''].filter(Boolean).join(' · ');
+    showFilterStatus();
     setBusy(false); updateSelection();
   }
 }
@@ -467,7 +492,7 @@ desktop?.onProgress(value => {
   if (value.stage === 'metadata') { $('runtime-status').textContent = `Loading movie data ${value.done}/${value.total}`; return; }
   $('progress-text').textContent = value.stage === 'posters' ? 'Loading posters ' + value.done + '/' + value.total : 'Watchlist page ' + value.page + '/' + value.pages;
 });
-$('search').addEventListener('input', () => { pageNumber = 1; renderGrid(); }); $('sort').addEventListener('change', () => { pageNumber = 1; renderGrid(); });
+$('search').addEventListener('input', () => { pageNumber = 1; renderGrid(); }); $('sort').addEventListener('change', () => sortCollection().catch(error => toast(error.message)));
 $('previous-page').addEventListener('click', () => { if (busy || gridLoading) return; pageNumber--; renderGrid(); });
 $('next-page').addEventListener('click', () => { if (busy || gridLoading) return; pageNumber++; renderGrid(); });
 $('retry-winner').addEventListener('click', async () => { if (busy || gridLoading) return; setBusy(true); try { await showWinner(winner); } finally { setBusy(false); } });
