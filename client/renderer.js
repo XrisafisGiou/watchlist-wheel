@@ -138,6 +138,11 @@ function visibleMovies() {
   if ($('sort').value === 'year') movies.sort((a,b) => Number(b.year) - Number(a.year) || a.title.localeCompare(b.title));
   return movies;
 }
+function movieDetails(movie) {
+  const minutes = Number.isFinite(movie.runtime) && movie.runtime > 0 ? movie.runtime : 0;
+  const duration = minutes >= 60 ? `${Math.floor(minutes / 60)}h${minutes % 60}m` : minutes ? `${minutes}m` : '';
+  return [movie.year, duration].filter(Boolean).join(' - ') || 'Year unknown';
+}
 function makePoster(movie) {
   const poster = document.createElement('div'); poster.className = 'poster';
   const fallback = document.createElement('span'); fallback.className = `poster-fallback${movie.title.length > 27 ? ' long-title' : ''}`; fallback.textContent = movie.title; poster.append(fallback);
@@ -193,18 +198,19 @@ async function renderGrid() {
   artwork.movies.forEach(movie => Object.assign(collection.movies.find(item => item.id === movie.id), movie));
   const fragment = document.createDocumentFragment();
   for (const movie of movies) {
-    const card = document.createElement('button'); card.className = 'movie-card'; card.dataset.id = movie.id;
-    card.setAttribute('aria-pressed', String(selected.has(movie.id))); card.setAttribute('aria-label', `${movie.title}${movie.year ? ` (${movie.year})` : ''}`); card.title = `${movie.title} ${movie.year}`;
+    const card = document.createElement('article'); card.className = 'movie-card'; card.dataset.id = movie.id;
+    const select = document.createElement('button'); select.className = 'poster-select'; select.disabled = busy;
+    select.setAttribute('aria-pressed', String(selected.has(movie.id))); select.setAttribute('aria-label', `Select ${movie.title}${movie.year ? ` (${movie.year})` : ''}`); select.title = `${movie.title} ${movie.year}`;
     if (eliminated.has(movie.id)) card.classList.add('eliminated');
     const poster = makePoster(movie); const check = document.createElement('span'); check.className = 'movie-check'; check.textContent = '✓'; poster.append(check);
-    const title = document.createElement('span'); title.className = 'movie-title'; title.textContent = movie.title;
-    const year = document.createElement('span'); year.className = 'movie-year'; year.textContent = movie.year || 'Year unknown';
-    card.append(poster, title, year); fragment.append(card);
-    card.addEventListener('click', () => {
-      if (busy) return;
+    const title = document.createElement('a'); title.className = 'movie-title'; title.textContent = movie.title; title.href = movie.url; title.target = '_blank'; title.rel = 'noopener noreferrer';
+    const year = document.createElement('span'); year.className = 'movie-year'; year.textContent = movieDetails(movie);
+    select.append(poster); card.append(select, title, year); fragment.append(card);
+    select.addEventListener('click', () => {
+      if (busy || gridLoading) return;
       if (selected.has(movie.id)) selected.delete(movie.id); else selected.add(movie.id);
       resetRounds(); updateSelection();
-      card.setAttribute('aria-pressed', String(selected.has(movie.id)));
+      select.setAttribute('aria-pressed', String(selected.has(movie.id)));
     });
   }
   $('movie-grid').replaceChildren(fragment);
@@ -320,7 +326,7 @@ async function loadCollection(action) {
 }
 function setBusy(value) {
   busy = value; document.body.classList.toggle('busy', value); $('spin').disabled = value || !wheelPool.length;
-  for (const card of $('movie-grid').children) card.disabled = value;
+  for (const button of $('movie-grid').querySelectorAll('.poster-select')) button.disabled = value;
   $('previous-page').disabled = value || pageNumber <= 1;
   $('next-page').disabled = value || pageNumber >= Math.ceil(visibleMovies().length / pageSize);
   $('max-runtime').disabled = value;
@@ -426,7 +432,7 @@ async function showWinner(movie) {
   if (!await decodeImage(image, movie.poster)) { movie.poster = ''; throw Error('Winner’s poster could not load. Retry to reveal your movie.'); }
   const poster = document.createElement('div'); poster.className = 'poster'; poster.append(image);
   $('round-status').textContent = `Tonight’s pick: ${movie.title}`;
-  $('winner-title').textContent = movie.title; $('winner-year').textContent = movie.year;
+  $('winner-title').textContent = movie.title; $('winner-title').href = movie.url; $('winner-year').textContent = movieDetails(movie);
   $('winner-poster').replaceChildren(poster);
   for (const card of $('movie-grid').children) if (card.dataset.id === movie.id) card.classList.add('won');
   $('winner-dialog').showModal(); fanfare();

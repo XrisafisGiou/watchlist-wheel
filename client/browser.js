@@ -23,7 +23,7 @@ async function preparePosters(value,signal){
      const saved=await read('artwork',movie.id);src=movie.posterKey||saved?.src||(!movie.poster?.startsWith('blob:')?movie.poster:'');
      if(movie.runtime===undefined&&saved?.runtime!==undefined)movie.runtime=saved.runtime;
      if(movie.genres===undefined&&saved?.genres!==undefined)movie.genres=saved.genres;
-     if(!src){const metadata=await json('/api/poster?url='+encodeURIComponent(movie.url),signal);src='/api/image?url='+encodeURIComponent(metadata.url);if(metadata.runtime!==undefined)movie.runtime=metadata.runtime;if(Array.isArray(metadata.genres))movie.genres=metadata.genres;}
+     if(!src||movie.runtime===undefined){try{const metadata=await json((src?'/api/metadata?url=':'/api/poster?url=')+encodeURIComponent(movie.url),signal);if(!src)src='/api/image?url='+encodeURIComponent(metadata.url);if(metadata.runtime!==undefined)movie.runtime=metadata.runtime;if(Array.isArray(metadata.genres))movie.genres=metadata.genres;}catch(error){signal.throwIfAborted();if(!src)throw error;}}
      let response=await cache?.match(src);
      if(!response){response=await fetch(src,{signal});if(!response.ok)throw Error('Could not load poster.');if(!response.headers.get('content-type')?.startsWith('image/'))throw Error('Invalid poster.');if(cache)try{await cache.put(src,response.clone());}catch{/* Storage quota: this image remains available for the current session. */}}
      const blob=await response.blob();signal.throwIfAborted();
