@@ -1,3 +1,4 @@
+import {searchMappedMovies} from './movie-search.js';
 const listeners=new Set();let active=null;let blobUrls=[];let currentCollection=null;let movieSearch=null;
 const progress=value=>listeners.forEach(listener=>listener(value));
 const database=new Promise((resolve,reject)=>{const request=indexedDB.open('watchlist-wheel',1);request.onupgradeneeded=()=>{request.result.createObjectStore('profiles',{keyPath:'profileId'});request.result.createObjectStore('artwork',{keyPath:'id'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(Error('Could not open browser storage.'));});
@@ -65,7 +66,7 @@ async function importCsv(){
 }
 const wrap=fn=>async(...args)=>{try{return{ok:true,value:await fn(...args)};}catch(error){return{ok:false,error:error.name==='AbortError'?'Loading cancelled.':error.message};}};
 window.desktop={
- searchMovies:wrap(async query=>{movieSearch?.abort();const controller=new AbortController();movieSearch=controller;return json('/api/search?q='+encodeURIComponent(query.trim()),controller.signal);}),
+ searchMovies:wrap(async query=>{movieSearch?.abort();const controller=new AbortController();movieSearch=controller;try{const results=await json('/api/search?q='+encodeURIComponent(query.trim()),controller.signal);return results.browserSearch?searchMappedMovies(query,controller.signal):results;}catch(error){controller.signal.throwIfAborted();return searchMappedMovies(query,controller.signal);}}),
  cancelMovieSearch:wrap(()=>movieSearch?.abort()),
  addSessionMovie:wrap(movie=>operation(async signal=>{
   if(!currentCollection)throw Error('Open a profile first.');const target=new URL(movie.url);

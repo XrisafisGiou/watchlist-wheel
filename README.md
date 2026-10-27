@@ -49,4 +49,4 @@ The build generates `public/` and `server/assets.js`; these are intentionally ig
 
 Saved profiles are browser-specific and do not sync across devices or hostnames. This project is not affiliated with Letterboxd.
 
-Temporary movies disappear when you reopen or refresh a profile or reload the page. Poster and metadata caches may remain, but movie membership is session-only. Search uses Letterboxd when available and falls back to Wikidata items with Letterboxd film identifiers when direct search is blocked; fallback results are labeled and may not cover every Letterboxd title.
+Temporary movies disappear when you reopen or refresh a profile or reload the page. Poster and metadata caches may remain, but movie membership is session-only. Search uses Letterboxd when available and falls back to Wikidata items with Letterboxd film identifiers when direct search is blocked; fallback results are labeled and may not cover every Letterboxd title. If the host is blocked from that fallback, the browser uses Wikidata's public CORS API without cookies or sign-in.
