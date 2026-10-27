@@ -3,6 +3,7 @@ const progress=value=>listeners.forEach(listener=>listener(value));
 const database=new Promise((resolve,reject)=>{const request=indexedDB.open('watchlist-wheel',1);request.onupgradeneeded=()=>{request.result.createObjectStore('profiles',{keyPath:'profileId'});request.result.createObjectStore('artwork',{keyPath:'id'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(Error('Could not open browser storage.'));});
 async function read(store,key){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction(store);const request=key===undefined?transaction.objectStore(store).getAll():transaction.objectStore(store).get(key);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
 async function write(store,value){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction(store,'readwrite');transaction.objectStore(store).put(value);transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);});}
+async function removeProfile(id){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction('profiles','readwrite');transaction.objectStore('profiles').delete(id);transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);});}
 async function json(url,signal){const response=await fetch(url,{signal,cache:url.startsWith('/api/watchlist?')?'no-store':'default'});const data=await response.json();if(!response.ok)throw Error(data.error||'Could not load Letterboxd.');return data;}
 async function save(value){if(value.profileIds)return value;value.profileId||=value.url||'csv:'+value.importedAt;const stored=structuredClone(value);stored.movies.forEach(movie=>{movie.poster=movie.posterKey||'';});await write('profiles',stored);return value;}
 async function prepare(value,signal){
@@ -35,15 +36,21 @@ async function preparePosters(value,signal){
  }));
  signal.throwIfAborted();value.missingPosters=missing;return value;
 }
-async function operation(fn){if(active)throw Error('A watchlist is loading.');active=new AbortController();try{return await fn(active.signal);}finally{active=null;}}
-async function importWatchlist(input){return operation(async signal=>{
+async function operation(fn){if(active)throw Error('A watchlist is loading.');active=new AbortController();try{return await fn(active.signal);}catch(error){active.abort();throw error;}finally{active=null;}}
+async function fetchWatchlist(input,signal){
  const value=input.trim();let url;
  try{url=new URL(/^@?[\w-]+$/.test(value)?'https://letterboxd.com/'+value.replace(/^@/,'')+'/watchlist/':value);}catch{throw Error('Enter a Letterboxd username or watchlist URL.');}
  if(!['https://letterboxd.com','https://www.letterboxd.com'].includes(url.origin)||url.username||url.password||!/^\/[\w-]+\/watchlist\/?$/.test(url.pathname))throw Error('Enter a Letterboxd username or watchlist URL.');
- const base='https://letterboxd.com/'+url.pathname.split('/')[1].toLowerCase()+'/watchlist/';const movies=new Map();const seen=new Set();let page=1,username='';
- while(page){signal.throwIfAborted();if(seen.has(page)||seen.size>=1000)throw Error('Unexpected watchlist pagination.');seen.add(page);const data=await json('/api/watchlist?url='+encodeURIComponent(base)+'&page='+page,signal);data.movies.forEach(movie=>movies.set(movie.id,movie));username=data.username;progress({page:seen.size,pages:data.pages,count:movies.size});page=data.nextPage;}
- return prepare({profileId:base,url:base,username,movies:[...movies.values()],importedAt:new Date().toISOString()},signal);
-});}
+ const base='https://letterboxd.com/'+url.pathname.split('/')[1].toLowerCase()+'/watchlist/';const movies=new Map();const seen=new Set();const refresh=crypto.randomUUID();let page=1,username='';
+ while(page){signal.throwIfAborted();if(seen.has(page)||seen.size>=1000)throw Error('Unexpected watchlist pagination.');seen.add(page);const data=await json('/api/watchlist?url='+encodeURIComponent(base)+'&page='+page+'&refresh='+refresh,signal);data.movies.forEach(movie=>movies.set(movie.id,movie));username=data.username;progress({page:seen.size,pages:data.pages,count:movies.size,username});page=data.nextPage;}
+ return{profileId:base,url:base,username,movies:[...movies.values()],importedAt:new Date().toISOString()};
+}
+async function importWatchlist(input){return operation(async signal=>prepare(await fetchWatchlist(input,signal),signal));}
+async function freshProfile(id,signal){
+ const saved=await read('profiles',id);if(!saved)throw Error('Profile not found.');
+ if(!saved.url)return saved;
+ try{return await fetchWatchlist(saved.url,signal);}catch(error){signal.throwIfAborted();throw Error(`Could not refresh ${saved.username}: ${error.message}`);}
+}
 function parseCsv(text){
  const rows=[];let row=[],field='',quoted=false;text=text.replace(/^\uFEFF/,'');
  for(let i=0;i<text.length;i++){const c=text[i];if(c==='"'){if(quoted&&text[i+1]==='"'){field+='"';i++;}else quoted=!quoted;}else if(!quoted&&(c===','||c==='\n'||c==='\r')){row.push(field);field='';if(c!==','){if(row.some(Boolean))rows.push(row);row=[];if(c==='\r'&&text[i+1]==='\n')i++;}}else field+=c;}
@@ -74,10 +81,13 @@ window.desktop={
  loadPosters:wrap(ids=>operation(async signal=>{if(!currentCollection)throw Error('Open a profile first.');const movies=currentCollection.movies.filter(movie=>ids.includes(movie.id));const value=await preparePosters({movies},signal);await save(currentCollection);return value;})),
  importWatchlist:wrap(importWatchlist),cancelImport:wrap(()=>active?.abort()),importCsv:wrap(importCsv),
  load:wrap(async()=>(await read('profiles')).map(({profileId,username,url,movies})=>({profileId,username,url,count:movies.length}))),
- openProfile:wrap(id=>operation(async signal=>{const value=await read('profiles',id);if(!value)throw Error('Profile not found.');return prepare(value,signal);})),
+ deleteProfile:wrap(id=>operation(async()=>{await removeProfile(id);if(currentCollection?.profileId===id)currentCollection=null;})),
+ openProfile:wrap(id=>operation(async signal=>prepare(await freshProfile(id,signal),signal))),
  openProfiles:wrap(ids=>operation(async signal=>{
   const unique=[...new Set(ids)];if(unique.length<2)throw Error('Select at least two profiles.');
-  const values=await Promise.all(unique.map(id=>read('profiles',id)));if(values.some(value=>!value))throw Error('Profile not found.');
+  const values=new Array(unique.length);let next=0;
+  await Promise.all(Array.from({length:Math.min(2,unique.length)},async()=>{while(next<unique.length){signal.throwIfAborted();const index=next++;values[index]=await freshProfile(unique[index],signal);}}));
+  signal.throwIfAborted();for(const value of values)await save(value);
   const otherMovies=values.slice(1).map(value=>new Set(value.movies.map(movie=>movie.id)));
   const movies=values[0].movies.filter(movie=>otherMovies.every(ids=>ids.has(movie.id)));
   return prepare({profileIds:unique,username:values.map(value=>value.username).join(' + '),url:'',movies},signal);

@@ -6,7 +6,7 @@ A simple movie picker for public Letterboxd watchlists.
 
 ## Features
 
-- Enter a Letterboxd username or watchlist URL and save profiles in your browser.
+- Enter a Letterboxd username or watchlist URL and save or delete profiles in your browser.
 - Open multiple saved profiles to find movies common to all of them.
 - Browse 36 movies per page, search, sort, and select movies across pages.
 - Optionally filter by maximum duration and genre. Genre buttons cycle through include, exclude, and neutral; exclusions take priority. Apply updates both the grid and wheel.
@@ -14,7 +14,7 @@ A simple movie picker for public Letterboxd watchlists.
 - Load page posters before displaying the grid and load the winner's poster before revealing the result.
 - Import a Letterboxd watchlist CSV.
 
-Profiles, movie metadata, and poster images are cached locally. No database or API key is required. Watchlists must be public; Letterboxd availability and rate limits affect imports.
+Saved Letterboxd watchlists are refreshed every time you open a profile, including every member of a common-movies group. Watchlist requests bypass browser and CDN caching. Movie metadata and poster images stay cached locally for speed. CSV imports remain local snapshots and can be replaced by importing a newer export. No database or API key is required. Watchlists must be public; Letterboxd availability and rate limits affect imports. A failed refresh shows an error instead of opening an outdated list.
 
 ## Run locally
 

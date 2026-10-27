@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const desktop = window.desktop;
 let collection = null;
 let profiles = [];
+let deletingProfile = false;
 let selectingProfiles = false;
 const selectedProfiles = new Set();
 let selected = new Set();
@@ -249,22 +250,32 @@ async function loadProfiles() {
 }
 function renderProfiles() {
   $('select-profiles').hidden = profiles.length < 2;
-  $('select-profiles').disabled = importing;
+  $('select-profiles').disabled = importing || deletingProfile;
   $('select-profiles').textContent = selectingProfiles ? 'Cancel' : 'Select profiles';
   $('select-profiles').setAttribute('aria-pressed', String(selectingProfiles));
   $('open-common').hidden = !selectingProfiles;
-  $('open-common').disabled = importing || selectedProfiles.size < 2;
+  $('open-common').disabled = importing || deletingProfile || selectedProfiles.size < 2;
   $('profile-list').replaceChildren(...profiles.map(profile => {
-    const button = document.createElement('button'); button.className = 'profile-button'; button.disabled = importing;
+    const row = document.createElement('div'); row.className = 'profile-row';
+    const button = document.createElement('button'); button.className = 'profile-button'; button.disabled = importing || deletingProfile;
     if (selectingProfiles) button.setAttribute('aria-pressed', String(selectedProfiles.has(profile.profileId)));
     const name = document.createElement('span'); name.textContent = profile.username;
     const count = document.createElement('span'); count.textContent = profile.count + ' movies';
     button.append(name, count); button.addEventListener('click', () => {
+      if (importing || deletingProfile) return;
       if (!selectingProfiles) return loadCollection(() => invoke('openProfile', profile.profileId));
       if (selectedProfiles.has(profile.profileId)) selectedProfiles.delete(profile.profileId); else selectedProfiles.add(profile.profileId);
       renderProfiles();
     });
-    return button;
+    const remove = document.createElement('button'); remove.className = 'delete-profile'; remove.textContent = '×'; remove.title = 'Delete profile'; remove.setAttribute('aria-label', `Delete ${profile.username} profile`); remove.disabled = importing || deletingProfile;
+    remove.addEventListener('click', async () => {
+      if (importing || deletingProfile) return;
+      deletingProfile = true; renderProfiles();
+      try { await invoke('deleteProfile', profile.profileId); selectedProfiles.delete(profile.profileId); await loadProfiles(); }
+      catch (error) { toast(error.message); }
+      finally { deletingProfile = false; renderProfiles(); }
+    });
+    row.append(button, remove); return row;
   }));
 }
 async function openCollection(value) {
@@ -292,7 +303,7 @@ function goHome() {
 function setImportState(value) {
   importing = value;
   for (const id of ['import-button', 'watchlist-url', 'csv']) $(id).disabled = value;
-  for (const button of $('profile-list').children) button.disabled = value;
+  for (const button of $('profile-list').querySelectorAll('button')) button.disabled = value;
   $('import-progress').hidden = !value;
   $('select-profiles').disabled = value;
   $('open-common').disabled = value || selectedProfiles.size < 2;
