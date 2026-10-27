@@ -1,0 +1,8 @@
+node_modules/
+.vercel/
+public/
+server/assets.js
+.env*
+test/artifacts/
+*.log
+*.tar.gz

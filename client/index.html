@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Watchlist Wheel</title>
+  <meta name="description" content="Choose a movie from your Letterboxd watchlist. Spin once or play elimination.">
+  <meta name="theme-color" content="#101719">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="browser.js"></script>
+  <script type="module" src="renderer.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a href="#" id="home" class="brand">Watchlist Wheel</a>
+    <button id="sound" class="quiet" aria-pressed="true"><span>Sound on</span></button>
+  </header>
+  <main id="welcome" class="welcome">
+    <form id="import-form">
+      <label for="watchlist-url">Letterboxd username</label>
+      <div class="url-box"><input id="watchlist-url" disabled type="text" required placeholder="Username" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="import-error"><button class="primary" type="submit" id="import-button" disabled>Load</button></div>
+    </form>
+    <div id="import-progress" class="import-progress" hidden><span class="loader"></span><span id="progress-text">Loading…</span><button id="cancel-import" class="text-button">Cancel</button></div>
+    <p id="import-error" class="error" role="alert" hidden></p>
+    <button id="csv" disabled class="text-button csv-button">Import CSV</button>
+    <section id="saved-profiles" class="saved-profiles" hidden><div class="profiles-heading"><h2>Saved profiles</h2><button id="select-profiles" class="text-button" aria-pressed="false" hidden>Select profiles</button></div><div id="profile-list"></div><button id="open-common" class="primary" disabled hidden>Open common movies</button></section>
+  </main>
+  <main id="library" class="library" hidden>
+    <div class="library-heading"><h1 id="library-description"></h1><div class="library-actions"><button id="refresh" class="quiet">Refresh</button><button id="change" class="quiet">Profiles</button></div></div>
+    <div id="poster-warning" class="notice" hidden><span id="poster-warning-text"></span><button id="retry-posters" class="text-button">Retry</button></div>
+    <div class="workspace">
+      <section class="collection" aria-label="Movies">
+        <div class="collection-toolbar"><input type="search" id="search" placeholder="Search movies…" aria-label="Search movies by title or year"><select id="sort" aria-label="Sort movies"><option value="original">Watchlist order</option><option value="title">Title A–Z</option><option value="year">Newest first</option></select></div>
+        <label class="duration-toggle" for="enable-duration"><input id="enable-duration" type="checkbox" aria-controls="duration-slider">Max Duration</label>
+        <div id="duration-slider" class="runtime-filter" hidden><input id="max-runtime" aria-label="Maximum duration in minutes" type="range" min="30" max="360" step="5" value="180"><output id="runtime-value" for="max-runtime">180 min</output></div>
+        <details id="genre-section" class="genre-section"><summary>Genres</summary><fieldset id="genre-filter" class="genre-filter" aria-label="Genres"><div id="genre-buttons" class="genre-buttons"></div></fieldset></details>
+        <div class="filter-actions"><button id="apply-runtime" class="quiet" hidden>Apply</button><button id="clear-runtime" class="text-button" hidden>Clear</button></div>
+        <p id="runtime-status" class="runtime-status" role="status" hidden></p>
+        <div class="selection-toolbar"><span id="showing"></span><div><button id="select-visible" class="text-button">Select results</button><button id="clear-selection" class="text-button" hidden>Clear selection</button></div></div>
+        <div id="grid-progress" class="import-progress" role="status" hidden><span class="loader"></span>Loading posters…</div>
+        <div class="movie-grid" id="movie-grid"></div>
+        <nav id="pagination" class="pagination" aria-label="Movie pages" hidden><button id="previous-page" class="quiet">Previous</button><span id="page-label" aria-live="polite"></span><button id="next-page" class="quiet">Next</button></nav>
+        <div id="no-results" class="empty" hidden><p>No movies found.</p><button class="quiet" id="reset-search">Clear search</button></div>
+        <div id="empty-watchlist" class="empty" hidden>Watchlist is empty.</div>
+      </section>
+      <aside class="wheel-panel">
+        <div class="pool-info"><span id="pool-type">All movies</span><span id="pool-count"></span></div>
+        <div class="wheel-stage"><span class="wheel-pointer" aria-hidden="true"></span><canvas id="wheel" width="800" height="800" role="img" aria-label="Movie selection wheel"></canvas><div class="wheel-hub" aria-hidden="true">↻</div></div>
+        <button id="spin" class="primary spin-button">Spin</button>
+        <p class="grid-note">Select posters to spin only those movies.</p>
+        <div id="round-status" class="round-status" role="status" aria-live="polite" hidden></div>
+        <button id="retry-winner" class="quiet" hidden>Load winner’s poster</button>
+        <button id="stop" class="quiet stop-button" hidden>Stop</button>
+        <div id="eliminations" class="eliminations" hidden><h3>Eliminated</h3><ol id="elimination-list"></ol></div>
+      </aside>
+    </div>
+  </main>
+  <dialog id="mode-dialog" class="modal">
+    <button class="modal-close quiet" id="close-mode" aria-label="Close">×</button><h2>Spin mode</h2><p id="mode-description"></p>
+    <div class="mode-options"><button class="mode-card" id="single"><strong>Single spin</strong><span>Pick one movie.</span></button><button class="mode-card" id="elimination"><strong>Elimination</strong><span>Last movie remaining wins.</span></button></div>
+    <p id="elimination-estimate"></p>
+  </dialog>
+  <dialog id="winner-dialog" class="modal winner-modal"><button class="modal-close quiet" id="close-winner" aria-label="Close">×</button><h2>Your movie</h2><div id="winner-poster" class="winner-poster"></div><h3 id="winner-title"></h3><p id="winner-year"></p><button id="open-winner" class="primary">Letterboxd ↗</button><button id="again" class="quiet">Spin again</button></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
