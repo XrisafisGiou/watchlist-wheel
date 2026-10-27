@@ -7,6 +7,14 @@ test('browser fallback uses public CORS requests without cookies',async()=>{
  const original=globalThis.fetch;let requests=0;globalThis.fetch=async(url,options)=>{requests++;const target=new URL(url);assert.equal(target.origin,'https://www.wikidata.org');assert.equal(target.searchParams.get('origin'),'*');assert.equal(options.credentials,'omit');return Response.json(target.searchParams.get('action')==='query'?{query:{search:[{title:'Q1'}]}}:{entities});};
  try{const result=await searchMappedMovies('Alien',new AbortController().signal);assert.equal(result.source,'wikidata');assert.equal(result.movies[0].url,'https://letterboxd.com/film/alien/');assert.equal(requests,2);}finally{globalThis.fetch=original;}
 });
+test('a transient first search failure recovers automatically without reusing cached errors',async()=>{
+ const original=globalThis.fetch;let requests=0;globalThis.fetch=async(url,options)=>{requests++;if(requests===1)return new Response('',{status:503});if(requests===2)assert.equal(options.cache,'no-store');return Response.json(new URL(url).searchParams.get('action')==='query'?{query:{search:[{title:'Q1'}]}}:{entities});};
+ try{const result=await searchMappedMovies('Alien',new AbortController().signal);assert.equal(result.movies[0].title,'Alien');assert.equal(requests,3);}finally{globalThis.fetch=original;}
+});
+test('failed searches stop retrying after three attempts and cancellation prevents retries',async()=>{
+ const original=globalThis.fetch;let requests=0;globalThis.fetch=async()=>{requests++;return new Response('',{status:503});};
+ try{await assert.rejects(()=>searchMappedMovies('Alien',new AbortController().signal),/unavailable/);assert.equal(requests,3);requests=0;const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10);await assert.rejects(()=>searchMappedMovies('Alien',controller.signal),error=>error.name==='AbortError');clearTimeout(timer);assert.equal(requests,1);}finally{globalThis.fetch=original;}
+});
 test('search returns only safe, canonical Letterboxd film links',()=>{
  const movies=moviesFromEntities(['Q1','Q2','Q3'],entities);assert.deepEqual(movies,[{id:'https://letterboxd.com/film/alien/',url:'https://letterboxd.com/film/alien/',title:'Alien',year:'1979',poster:''}]);
 });

@@ -261,7 +261,7 @@ async function renderGrid() {
   $('movie-grid').hidden = true; $('grid-progress').hidden = false;
   $('pagination').hidden = pages <= 1;
   $('page-label').textContent = `${pageNumber} / ${pages}`;
-  $('previous-page').disabled = true; $('next-page').disabled = true;
+  $('first-page').disabled = $('previous-page').disabled = true; $('last-page').disabled = $('next-page').disabled = true;
   $('poster-warning').hidden = true;
   try {
   const artwork = await invoke('loadPosters', movies.map(movie => movie.id));
@@ -302,7 +302,7 @@ async function renderGrid() {
   } catch (error) { toast(error.message); }
   finally {
     gridLoading = false; $('grid-progress').hidden = true; $('movie-grid').hidden = false;
-    $('previous-page').disabled = pageNumber <= 1; $('next-page').disabled = pageNumber >= pages;
+    $('first-page').disabled = $('previous-page').disabled = busy || pageNumber <= 1; $('last-page').disabled = $('next-page').disabled = busy || pageNumber >= pages;
     updateSelection();
     if (JSON.stringify(allMovies.map(movie=>movie.id)) !== JSON.stringify(visibleMovies().map(movie=>movie.id))) { pageNumber = 1; renderGrid(); }
   }
@@ -404,8 +404,8 @@ async function loadCollection(action) {
 function setBusy(value) {
   busy = value; document.body.classList.toggle('busy', value); $('spin').disabled = value || !wheelPool.length;
   for (const button of $('movie-grid').querySelectorAll('button')) button.disabled = value;
-  $('previous-page').disabled = value || pageNumber <= 1;
-  $('next-page').disabled = value || pageNumber >= Math.ceil(visibleMovies().length / pageSize);
+  $('first-page').disabled = $('previous-page').disabled = value || gridLoading || pageNumber <= 1;
+  $('last-page').disabled = $('next-page').disabled = value || gridLoading || pageNumber >= Math.ceil(visibleMovies().length / pageSize);
   $('max-runtime').disabled = value;
   $('enable-duration').disabled = value;
   $('genre-filter').disabled = value;
@@ -651,6 +651,8 @@ desktop?.onProgress(value => {
 $('search').addEventListener('input', () => { pageNumber = 1; renderGrid(); }); $('sort').addEventListener('change', () => sortCollection().catch(error => toast(error.message)));
 $('previous-page').addEventListener('click', () => { if (busy || gridLoading) return; pageNumber--; renderGrid(); });
 $('next-page').addEventListener('click', () => { if (busy || gridLoading) return; pageNumber++; renderGrid(); });
+$('first-page').addEventListener('click', () => { if (busy || gridLoading) return; pageNumber = 1; renderGrid(); });
+$('last-page').addEventListener('click', () => { if (busy || gridLoading) return; pageNumber = Math.max(1, Math.ceil(visibleMovies().length / pageSize)); renderGrid(); });
 $('retry-winner').addEventListener('click', async () => { if (busy || gridLoading) return; setBusy(true); try { await showWinner(winner); } finally { setBusy(false); } });
 $('reset-search').addEventListener('click', () => { $('search').value = ''; renderGrid(); $('search').focus(); });
 $('select-visible').addEventListener('click', () => { if (busy) return; visibleMovies().forEach(movie => selected.add(movie.id)); resetRounds(); renderGrid(); updateSelection(); });
