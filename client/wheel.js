@@ -16,6 +16,11 @@ export function landingRotation(current, index, count, turns = 5) {
 export function poolFor(movies, selected) {
   return selected.size ? movies.filter(movie => selected.has(movie.id)) : [...movies];
 }
+export function randomSample(movies, count, cryptoSource = globalThis.crypto) {
+  if (!Number.isInteger(count) || count < 1 || count > movies.length) throw new Error('Not enough movies for this draw.');
+  const remaining = [...movies];
+  return Array.from({length:count}, () => remaining.splice(randomIndex(remaining.length, cryptoSource), 1)[0]);
+}
 export function decadeFor(movie) {
   const year = Number(movie.year);
   return Number.isInteger(year) && year > 0 ? Math.floor(year / 10) * 10 : null;

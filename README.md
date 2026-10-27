@@ -11,6 +11,7 @@ A simple movie picker for public Letterboxd watchlists.
 - Browse 36 movies per page, search, sort by title, year, or duration (shortest or longest first), and select movies across pages. Runtimes appear beside release years; movie titles link to Letterboxd in a new tab. Unknown durations sort last.
 - Optionally filter by maximum duration, genre, and one or more decades. Genre and decade buttons cycle through include, exclude, and neutral; exclusions take priority. Apply updates both the grid and wheel. All decades from the 2020s down to the 1850s are available, using release years already loaded with the watchlist.
 - Spin once or play elimination, with animation and sound effects. Elimination has Quick, Normal, and Dramatic speeds with an updated time estimate. The speed preference is remembered in your browser. Spin again repeats the chosen mode and speed.
+- Draw a three-film shortlist from the current filtered or selected pool. All three are different, their posters load before the reveal, and you can choose one or draw again. This mode needs at least three eligible movies.
 - Load page posters before displaying the grid and load the winner's poster before revealing the result.
 - Import a Letterboxd watchlist CSV.
 

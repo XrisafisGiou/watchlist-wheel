@@ -53,6 +53,7 @@
         <p class="grid-note">Select posters to spin only those movies.</p>
         <div id="round-status" class="round-status" role="status" aria-live="polite" hidden></div>
         <button id="retry-winner" class="quiet" hidden>Load winner’s poster</button>
+        <button id="retry-shortlist" class="quiet" hidden>Load shortlist posters</button>
         <button id="stop" class="quiet stop-button" hidden>Stop</button>
         <div id="eliminations" class="eliminations" hidden><h3>Eliminated</h3><ol id="elimination-list"></ol></div>
       </aside>
@@ -61,10 +62,11 @@
   <dialog id="delete-profile-dialog" class="modal" aria-labelledby="delete-profile-title"><h2 id="delete-profile-title">Delete profile?</h2><p id="delete-profile-name"></p><div class="delete-actions"><button id="cancel-delete-profile" class="quiet" autofocus>Cancel</button><button id="confirm-delete-profile" class="primary">Delete</button></div></dialog>
   <dialog id="mode-dialog" class="modal">
     <button class="modal-close quiet" id="close-mode" aria-label="Close">×</button><h2>Spin mode</h2><p id="mode-description"></p>
-    <div class="mode-options"><button class="mode-card" id="single"><strong>Single spin</strong><span>Pick one movie.</span></button><button class="mode-card" id="elimination"><strong>Elimination</strong><span>Last movie remaining wins.</span></button></div>
+    <div class="mode-options"><button class="mode-card" id="single"><strong>Single spin</strong><span>Pick one movie.</span></button><button class="mode-card" id="elimination"><strong>Elimination</strong><span>Last movie remaining wins.</span></button><button class="mode-card shortlist-mode" id="shortlist"><strong>Three-film shortlist</strong><span id="shortlist-description">Draw three different movies.</span></button></div>
     <div id="elimination-speed-field" class="elimination-speed"><label for="elimination-speed">Elimination speed</label><select id="elimination-speed"><option value="quick">Quick</option><option value="normal" selected>Normal</option><option value="dramatic">Dramatic</option></select></div><p id="elimination-estimate"></p>
   </dialog>
   <dialog id="winner-dialog" class="modal winner-modal"><button class="modal-close quiet" id="close-winner" aria-label="Close">×</button><h2>Your movie</h2><div id="winner-poster" class="winner-poster"></div><h3><a id="winner-title" target="_blank" rel="noopener noreferrer"></a></h3><p id="winner-year"></p><button id="open-winner" class="primary">Letterboxd ↗</button><button id="again" class="quiet">Spin again</button></dialog>
+  <dialog id="shortlist-dialog" class="modal shortlist-modal" aria-labelledby="shortlist-title"><button class="modal-close quiet" id="close-shortlist" aria-label="Close shortlist">×</button><h2 id="shortlist-title">Your shortlist</h2><div id="shortlist-grid" class="shortlist-grid"></div><button id="again-shortlist" class="quiet">Spin again</button></dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

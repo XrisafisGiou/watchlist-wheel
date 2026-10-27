@@ -1,4 +1,4 @@
-import { randomIndex, landingRotation, poolFor, decadeFor, eliminationTiming } from './wheel.js';
+import { randomIndex, randomSample, landingRotation, poolFor, decadeFor, eliminationTiming } from './wheel.js';
 const $ = id => document.getElementById(id);
 const desktop = window.desktop;
 let collection = null;
@@ -21,6 +21,7 @@ let wheelPool = [];
 let stopped = false;
 let generation = 0;
 let winner = null;
+let shortlist = [];
 let eliminated = new Set();
 let audio;
 let lastTick = 0;
@@ -310,6 +311,7 @@ function updateSelection() {
   drawWheel($('wheel'), wheelPool, rotation);
 }
 function resetRounds() {
+  shortlist = []; $('retry-shortlist').hidden = true;
   $('retry-winner').hidden = true;
   eliminated.clear(); $('elimination-list').replaceChildren(); $('eliminations').hidden = true; $('round-status').hidden = true;
   for (const card of $('movie-grid').children) card.classList.remove('eliminated', 'won');
@@ -441,6 +443,8 @@ function modePrompt() {
   if (busy || gridLoading || !wheelPool.length) return;
   $('mode-description').textContent = `${wheelPool.length} ${wheelPool.length === 1 ? 'movie' : 'movies'}`;
   $('elimination').disabled = wheelPool.length < 2;
+  $('shortlist').disabled = wheelPool.length < 3;
+  $('shortlist-description').textContent = wheelPool.length < 3 ? 'Needs at least 3 movies.' : 'Draw three different movies.';
   $('elimination-speed-field').hidden = wheelPool.length < 2;
   updateEliminationEstimate();
   $('mode-dialog').showModal();
@@ -462,7 +466,7 @@ function animateSpin(movies, index, duration) {
   });
 }
 async function startSpin(mode, speed = $('elimination-speed').value) {
-  if (busy || gridLoading || !wheelPool.length || !['single', 'elimination'].includes(mode)) return;
+  if (busy || gridLoading || !wheelPool.length || !['single', 'elimination', 'shortlist'].includes(mode) || (mode === 'shortlist' && wheelPool.length < 3)) return;
   lastSpinMode = mode;
   if (mode === 'elimination') lastSpinSpeed = speed;
   $('mode-dialog').close(); initAudio(); resetRounds(); setBusy(true); stopped = false;
@@ -475,6 +479,15 @@ async function startSpin(mode, speed = $('elimination-speed').value) {
       const index = randomIndex(contenders.length);
       await animateSpin(contenders, index, 5200);
       if (run === generation) await showWinner(contenders[index]);
+    } else if (mode === 'shortlist') {
+      const picks = randomSample(contenders, 3);
+      for (let i = 0; i < picks.length && run === generation; i++) {
+        $('round-status').textContent = `Picking ${i + 1} of 3…`;
+        const index = contenders.findIndex(movie => movie.id === picks[i].id);
+        await animateSpin(contenders, index, i === 0 ? 3000 : 1800);
+        contenders.splice(index, 1);
+      }
+      if (run === generation) await showShortlist(picks);
     } else {
       $('eliminations').hidden = false;
       const total = contenders.length;
@@ -512,9 +525,39 @@ async function showWinner(movie) {
   $('round-status').textContent = `Tonight’s pick: ${movie.title}`;
   $('winner-title').textContent = movie.title; $('winner-title').href = movie.url; $('winner-year').textContent = movieDetails(movie);
   $('winner-poster').replaceChildren(poster);
-  for (const card of $('movie-grid').children) if (card.dataset.id === movie.id) card.classList.add('won');
+  for (const card of $('movie-grid').children) card.classList.toggle('won', card.dataset.id === movie.id);
   $('winner-dialog').showModal(); fanfare();
   } catch (error) { $('round-status').textContent = error.message; $('retry-winner').hidden = false; }
+}
+async function showShortlist(movies) {
+  shortlist = movies; $('retry-shortlist').hidden = true;
+  $('round-status').textContent = 'Loading shortlist posters…';
+  try {
+    const artwork = await invoke('loadPosters', movies.map(movie => movie.id));
+    const byId = new Map(artwork.movies.map(movie => [movie.id, movie]));
+    const cards = await Promise.all(movies.map(async movie => {
+      Object.assign(movie, byId.get(movie.id));
+      if (!movie.poster) throw Error('Some shortlist posters could not load. Retry to reveal your movies.');
+      const image = document.createElement('img'); image.alt = movie.title;
+      if (!await decodeImage(image, movie.poster)) { movie.poster = ''; throw Error('Some shortlist posters could not load. Retry to reveal your movies.'); }
+      const card = document.createElement('article'); card.className = 'shortlist-card'; card.dataset.id = movie.id;
+      const poster = document.createElement('div'); poster.className = 'poster'; poster.append(image);
+      const title = document.createElement('a'); title.className = 'movie-title'; title.textContent = movie.title; title.href = movie.url; title.target = '_blank'; title.rel = 'noopener noreferrer'; title.title = movie.title;
+      const details = document.createElement('span'); details.className = 'movie-year'; details.textContent = movieDetails(movie);
+      const choose = document.createElement('button'); choose.className = 'quiet'; choose.textContent = 'Choose'; choose.setAttribute('aria-label', `Choose ${movie.title}`);
+      choose.addEventListener('click', async () => {
+        if (busy || gridLoading) return;
+        $('shortlist-dialog').close(); setBusy(true);
+        try { await showWinner(movie); } finally { setBusy(false); }
+      });
+      card.append(poster, title, details, choose); return card;
+    }));
+    $('shortlist-grid').replaceChildren(...cards);
+    const ids = new Set(movies.map(movie => movie.id));
+    for (const card of $('movie-grid').children) card.classList.toggle('won', ids.has(card.dataset.id));
+    $('round-status').textContent = 'Your shortlist is ready.';
+    $('shortlist-dialog').showModal(); fanfare();
+  } catch (error) { $('round-status').textContent = error.message; $('retry-shortlist').hidden = false; }
 }
 
 $('sound').addEventListener('click', () => { sound = !sound; setSound(); initAudio(); tone(660, .1); }); setSound();
@@ -556,13 +599,17 @@ $('spin').addEventListener('click', modePrompt);
 $('close-mode').addEventListener('click', () => $('mode-dialog').close());
 $('single').addEventListener('click', () => startSpin('single'));
 $('elimination').addEventListener('click', () => startSpin('elimination'));
+$('shortlist').addEventListener('click', () => startSpin('shortlist'));
+$('close-shortlist').addEventListener('click', () => $('shortlist-dialog').close());
+$('again-shortlist').addEventListener('click', () => { if (busy || gridLoading) return; $('shortlist-dialog').close(); updateSelection(); startSpin('shortlist'); });
+$('retry-shortlist').addEventListener('click', async () => { if (busy || gridLoading || !shortlist.length) return; setBusy(true); try { await showShortlist(shortlist); } finally { setBusy(false); } });
 $('elimination-speed').addEventListener('change', () => { localStorage.setItem('wheel-elimination-speed', $('elimination-speed').value); updateEliminationEstimate(); });
 $('stop').addEventListener('click', () => { stopped = true; $('stop').disabled = true; $('stop').textContent = 'Stopping after this spin…'; setTimeout(() => { $('stop').disabled = false; $('stop').textContent = 'Stop elimination'; }, 3500); });
 $('close-winner').addEventListener('click', () => $('winner-dialog').close());
 $('again').addEventListener('click', () => { if (busy || gridLoading) return; $('winner-dialog').close(); updateSelection(); startSpin(lastSpinMode || 'single', lastSpinSpeed); });
 $('open-winner').addEventListener('click', () => invoke('openFilm', winner.url).catch(error => toast(error.message)));
 document.addEventListener('keydown', event => {
-  if (event.key === '/' && !$('library').hidden && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !$('mode-dialog').open && !$('winner-dialog').open && !busy) { event.preventDefault(); $('search').focus(); }
+  if (event.key === '/' && !$('library').hidden && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !$('mode-dialog').open && !$('winner-dialog').open && !$('shortlist-dialog').open && !busy) { event.preventDefault(); $('search').focus(); }
 });
 if (desktop) loadProfiles().catch(error => toast(error.message));
 
