@@ -38,8 +38,10 @@ const draftExcludedGenres = new Set();
 let appliedExcludedGenres = new Set();
 const draftDecades = new Set();
 let appliedDecades = new Set();
-function hasDraftFilters() { return $('enable-duration').checked || draftGenres.size || draftExcludedGenres.size || draftDecades.size; }
-function hasAppliedFilters() { return maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size || appliedDecades.size; }
+const draftExcludedDecades = new Set();
+let appliedExcludedDecades = new Set();
+function hasDraftFilters() { return $('enable-duration').checked || draftGenres.size || draftExcludedGenres.size || draftDecades.size || draftExcludedDecades.size; }
+function hasAppliedFilters() { return maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size || appliedDecades.size || appliedExcludedDecades.size; }
 function syncApplyVisibility() {
   $('apply-runtime').hidden = !hasDraftFilters() && !filteringRuntime;
 }
@@ -49,7 +51,7 @@ function syncDraftFilters() {
 function clearFilters() {
   if (busy || gridLoading) return;
   maxRuntime = null; appliedGenres.clear(); draftGenres.clear(); appliedExcludedGenres.clear(); draftExcludedGenres.clear(); renderGenres();
-  draftDecades.clear(); appliedDecades.clear(); renderDecades();
+  draftDecades.clear(); appliedDecades.clear(); draftExcludedDecades.clear(); appliedExcludedDecades.clear(); renderDecades();
   $('enable-duration').checked = false; $('duration-slider').hidden = true;
   pageNumber = 1; $('clear-runtime').hidden = true; $('runtime-status').hidden = true;
   syncApplyVisibility(); resetRounds(); renderGrid();
@@ -77,15 +79,22 @@ function renderGenres() {
 }
 renderGenres();
 function renderDecades() {
-  const decades = [...new Set(collection.movies.map(decadeFor).filter(value => value !== null))].sort((a,b) => b-a);
-  $('decade-section').hidden = !decades.length;
+  const decades = Array.from({length:18}, (_,index) => 2020 - index * 10);
   $('decade-buttons').replaceChildren(...decades.map(decade => {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'genre-button decade-button'; button.textContent = `${decade}s`;
-    button.setAttribute('aria-pressed', String(draftDecades.has(decade)));
+    function updateButton() {
+      const state = draftDecades.has(decade) ? 'include' : draftExcludedDecades.has(decade) ? 'exclude' : 'neutral';
+      button.dataset.state = state; button.setAttribute('aria-pressed', state === 'exclude' ? 'mixed' : String(state === 'include'));
+      button.title = state === 'include' ? 'Included · click to exclude' : state === 'exclude' ? 'Excluded · click to reset' : 'Click to include';
+      button.setAttribute('aria-description', button.title);
+    }
+    updateButton();
     button.addEventListener('click', () => {
       if (busy || gridLoading) return;
-      if (draftDecades.has(decade)) draftDecades.delete(decade); else draftDecades.add(decade);
-      button.setAttribute('aria-pressed', String(draftDecades.has(decade))); syncDraftFilters();
+      if (draftDecades.has(decade)) { draftDecades.delete(decade); draftExcludedDecades.add(decade); }
+      else if (draftExcludedDecades.has(decade)) draftExcludedDecades.delete(decade);
+      else draftDecades.add(decade);
+      updateButton(); syncDraftFilters();
     });
     return button;
   }));
@@ -155,7 +164,7 @@ function drawWheel(canvas, movies, angle = 0) {
 }
 
 function eligibleMovies() {
-  return collection.movies.filter(movie => (maxRuntime === null || (Number.isFinite(movie.runtime) && movie.runtime > 0 && movie.runtime <= maxRuntime)) && (!appliedGenres.size || movie.genres?.some(genre => appliedGenres.has(genre))) && !movie.genres?.some(genre => appliedExcludedGenres.has(genre)) && (!appliedDecades.size || appliedDecades.has(decadeFor(movie))));
+  return collection.movies.filter(movie => (maxRuntime === null || (Number.isFinite(movie.runtime) && movie.runtime > 0 && movie.runtime <= maxRuntime)) && (!appliedGenres.size || movie.genres?.some(genre => appliedGenres.has(genre))) && !movie.genres?.some(genre => appliedExcludedGenres.has(genre)) && (!appliedDecades.size || appliedDecades.has(decadeFor(movie))) && !appliedExcludedDecades.has(decadeFor(movie)));
 }
 function visibleMovies() {
   const query = $('search').value.toLocaleLowerCase().trim();
@@ -176,7 +185,7 @@ function visibleMovies() {
 }
 function showFilterStatus() {
   $('runtime-status').hidden = !hasAppliedFilters();
-  $('runtime-status').textContent = [maxRuntime !== null ? `Up to ${maxRuntime} min` : '', [...appliedGenres].join(', '), appliedExcludedGenres.size ? 'Exclude ' + [...appliedExcludedGenres].join(', ') : '', [...appliedDecades].sort((a,b)=>b-a).map(decade=>`${decade}s`).join(', ')].filter(Boolean).join(' · ');
+  $('runtime-status').textContent = [maxRuntime !== null ? `Up to ${maxRuntime} min` : '', [...appliedGenres].join(', '), appliedExcludedGenres.size ? 'Exclude ' + [...appliedExcludedGenres].join(', ') : '', [...appliedDecades].sort((a,b)=>b-a).map(decade=>`${decade}s`).join(', '), appliedExcludedDecades.size ? 'Exclude ' + [...appliedExcludedDecades].sort((a,b)=>b-a).map(decade=>`${decade}s`).join(', ') : ''].filter(Boolean).join(' · ');
 }
 async function sortCollection() {
   if (busy || gridLoading) { $('sort').value = lastSort; return; }
@@ -345,7 +354,7 @@ async function openCollection(value) {
   lastSpinMode = null;
   collection = value; selected = new Set(); pageNumber = 1; maxRuntime = null;
   draftGenres.clear(); appliedGenres.clear(); draftExcludedGenres.clear(); appliedExcludedGenres.clear(); renderGenres();
-  draftDecades.clear(); appliedDecades.clear(); renderDecades(); $('decade-section').open = false;
+  draftDecades.clear(); appliedDecades.clear(); draftExcludedDecades.clear(); appliedExcludedDecades.clear(); renderDecades(); $('decade-section').open = false;
   $('genre-section').open = false;
   $('enable-duration').checked = false; $('duration-slider').hidden = true;
   syncApplyVisibility();
@@ -400,13 +409,14 @@ async function applyRuntime() {
   const chosenGenres = new Set(draftGenres);
   const excludedGenres = new Set(draftExcludedGenres);
   const chosenDecades = new Set(draftDecades);
+  const excludedDecades = new Set(draftExcludedDecades);
   filteringRuntime = true; setBusy(true); $('apply-runtime').textContent = 'Cancel';
   $('runtime-status').hidden = false; $('runtime-status').textContent = 'Loading movie data…';
   try {
     const metadata = limit !== null || chosenGenres.size || excludedGenres.size ? await invoke('loadMetadata', chosenGenres.size > 0 || excludedGenres.size > 0, limit !== null) : [];
     const byId = new Map(metadata.map(movie => [movie.id, movie]));
     collection.movies.forEach(movie => Object.assign(movie, byId.get(movie.id)));
-    maxRuntime = limit; appliedGenres = chosenGenres; appliedExcludedGenres = excludedGenres; appliedDecades = chosenDecades; pageNumber = 1;
+    maxRuntime = limit; appliedGenres = chosenGenres; appliedExcludedGenres = excludedGenres; appliedDecades = chosenDecades; appliedExcludedDecades = excludedDecades; pageNumber = 1;
     const allowed = new Set(eligibleMovies().map(movie => movie.id));
     selected = new Set([...selected].filter(id => allowed.has(id)));
     resetRounds(); $('clear-runtime').hidden = !hasAppliedFilters();

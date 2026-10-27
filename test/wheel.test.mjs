@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {decadeFor,eliminationTiming} from '../client/wheel.js';
 
 test('decades respect decade boundaries and do not guess missing years',()=>{
- for(const [year,expected] of [['1979',1970],['1980',1980],[1999,1990],['2000',2000],['2026',2020],['',null],[null,null],['unknown',null],[0,null]])assert.equal(decadeFor({year}),expected);
+ for(const [year,expected] of [['1850',1850],['1859',1850],['1860',1860],['1979',1970],['1980',1980],[1999,1990],['2000',2000],['2026',2020],['',null],[null,null],['unknown',null],[0,null]])assert.equal(decadeFor({year}),expected);
 });
 test('elimination speeds remain ordered for first, middle and final rounds',()=>{
  for(const [round,remaining,total] of [[1,2,2],[1,531,531],[8,20,27],[530,2,531]]){
