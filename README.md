@@ -31,6 +31,8 @@ The development command may prompt you to sign in and link a Vercel project. Ope
 
 ## Deploy to Vercel
 
+This repository is connected to the existing Watchlist Wheel Vercel project. Pushes to `main` automatically build and publish to https://watchlist-wheel.vercel.app; other branches receive preview deployments.
+
 Import this repository in Vercel, or run `npx vercel --prod` after signing in. The included `vercel.json` configures the build and functions. No environment variables or paid integrations are needed.
 
 The build generates `public/` and `server/assets.js`; these are intentionally ignored by Git. `.env*`, `.vercel/`, dependencies, and local test artifacts are also ignored.
