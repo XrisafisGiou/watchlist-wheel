@@ -10,6 +10,7 @@ let lastSpinSpeed = 'normal';
 const savedEliminationSpeed = localStorage.getItem('wheel-elimination-speed');
 $('elimination-speed').value = ['quick','normal','dramatic'].includes(savedEliminationSpeed) ? savedEliminationSpeed : 'normal';
 let lastSort = 'original';
+let wheelLocations = [];
 let selectingProfiles = false;
 const selectedProfiles = new Set();
 let selected = new Set();
@@ -474,6 +475,24 @@ function animateSpin(movies, index, duration) {
     requestAnimationFrame(frame);
   });
 }
+function restoreWheelLocation() {
+  for (const {element, placeholder} of wheelLocations) placeholder.replaceWith(element);
+  wheelLocations = []; document.body.classList.remove('spin-focus-open');
+}
+function closeSpinFocus() {
+  if ($('spin-dialog').open) $('spin-dialog').close();
+  restoreWheelLocation();
+}
+function openSpinFocus(mode) {
+  closeSpinFocus();
+  const elements = [$('pool-type').parentElement, $('wheel').parentElement, $('round-status'), $('stop'), $('eliminations')];
+  for (const element of elements) {
+    const placeholder = document.createComment('Wheel position'); element.before(placeholder); wheelLocations.push({element, placeholder}); $('spin-focus').append(element);
+  }
+  $('spin-dialog').dataset.mode = mode;
+  $('spin-focus-title').textContent = mode === 'elimination' ? 'Elimination' : mode === 'shortlist' ? 'Three-film shortlist' : 'Single spin';
+  document.body.classList.add('spin-focus-open'); $('spin-dialog').showModal();
+}
 async function startSpin(mode, speed = $('elimination-speed').value) {
   if (busy || gridLoading || !wheelPool.length || !['single', 'elimination', 'shortlist'].includes(mode) || (mode === 'shortlist' && wheelPool.length < 3)) return;
   lastSpinMode = mode;
@@ -483,6 +502,7 @@ async function startSpin(mode, speed = $('elimination-speed').value) {
   $('round-status').hidden = false;
   $('stop').hidden = mode !== 'elimination';
   try {
+    openSpinFocus(mode);
     if (mode === 'single') {
       $('round-status').textContent = 'Spinning…';
       const index = randomIndex(contenders.length);
@@ -518,7 +538,7 @@ async function startSpin(mode, speed = $('elimination-speed').value) {
       else { $('round-status').textContent = 'Stopped.'; }
     }
   } catch (error) { toast(error.message); }
-  finally { setBusy(false); $('stop').hidden = true; }
+  finally { closeSpinFocus(); setBusy(false); $('stop').hidden = true; }
 }
 async function showWinner(movie) {
   winner = movie;
@@ -535,7 +555,7 @@ async function showWinner(movie) {
   $('winner-title').textContent = movie.title; $('winner-title').href = movie.url; $('winner-year').textContent = movieDetails(movie);
   $('winner-poster').replaceChildren(poster);
   for (const card of $('movie-grid').children) card.classList.toggle('won', card.dataset.id === movie.id);
-  $('winner-dialog').showModal(); fanfare();
+  closeSpinFocus(); $('winner-dialog').showModal(); fanfare();
   } catch (error) { $('round-status').textContent = error.message; $('retry-winner').hidden = false; }
 }
 async function showShortlist(movies) {
@@ -565,7 +585,7 @@ async function showShortlist(movies) {
     const ids = new Set(movies.map(movie => movie.id));
     for (const card of $('movie-grid').children) card.classList.toggle('won', ids.has(card.dataset.id));
     $('round-status').textContent = 'Your shortlist is ready.';
-    $('shortlist-dialog').showModal(); fanfare();
+    closeSpinFocus(); $('shortlist-dialog').showModal(); fanfare();
   } catch (error) { $('round-status').textContent = error.message; $('retry-shortlist').hidden = false; }
 }
 function renderMovieSearch() {
@@ -608,6 +628,8 @@ async function removeTemporaryMovie(movie) {
 $('sound').addEventListener('click', () => { sound = !sound; setSound(); initAudio(); tone(660, .1); }); setSound();
 $('home').addEventListener('click', event => { event.preventDefault(); goHome(); });
 $('change').addEventListener('click', goHome);
+$('minimize-spin').addEventListener('click', closeSpinFocus);
+$('spin-dialog').addEventListener('close', () => { if (!$('spin-dialog').open) restoreWheelLocation(); });
 $('add-movies').addEventListener('click', () => { if (busy || gridLoading || !collection) return; renderMovieSearch(); $('movie-search-status').hidden = true; $('movie-search-dialog').showModal(); $('movie-query').focus(); });
 $('close-movie-search').addEventListener('click', () => $('movie-search-dialog').close());
 $('movie-search-dialog').addEventListener('close', () => { movieSearchVersion++; invoke('cancelMovieSearch').catch(()=>{}); $('movie-search-submit').disabled = addingMovie; });
