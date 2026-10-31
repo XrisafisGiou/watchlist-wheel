@@ -24,7 +24,8 @@
     </form>
     <div id="import-progress" class="import-progress" hidden><span class="loader"></span><span id="progress-text">Loading…</span><button id="cancel-import" class="text-button">Cancel</button></div>
     <p id="import-error" class="error" role="alert" hidden></p>
-    <button id="csv" disabled class="text-button csv-button">Import CSV</button>
+    <div class="home-actions"><button id="create-manual" disabled class="quiet">Create profile</button><button id="show-list-import" disabled class="quiet" aria-expanded="false" aria-controls="list-form">Import list</button><button id="csv" disabled class="text-button">Import CSV</button></div>
+    <form id="list-form" hidden><label for="list-url">Letterboxd list URL</label><div class="url-box"><input id="list-url" type="url" required placeholder="https://letterboxd.com/username/list/…/" autocomplete="off" aria-describedby="import-error"><button id="list-import-button" class="primary" type="submit">Load</button></div></form>
     <section id="saved-profiles" class="saved-profiles" hidden><div class="profiles-heading"><h2>Saved profiles</h2><button id="select-profiles" class="text-button" aria-pressed="false" hidden>Select profiles</button></div><div id="profile-list"></div><button id="open-common" class="primary" disabled hidden>Open common movies</button></section>
   </main>
   <main id="library" class="library" hidden>
@@ -50,6 +51,7 @@
         <div class="pool-info"><span id="pool-type">All movies</span><span id="pool-count"></span></div>
         <div class="wheel-stage"><span class="wheel-pointer" aria-hidden="true"></span><canvas id="wheel" width="800" height="800" role="img" aria-label="Movie selection wheel"></canvas><div class="wheel-hub" aria-hidden="true">↻</div></div>
         <button id="spin" class="primary spin-button">Spin</button>
+        <label id="remove-winner-option" class="duration-toggle remove-winner-option" hidden title="Removes the winner from this saved profile only."><input id="remove-winner" type="checkbox">Remove winner</label>
         <p class="grid-note">Select posters to spin only those movies.</p>
         <div id="round-status" class="round-status" role="status" aria-live="polite" hidden></div>
         <button id="retry-winner" class="quiet" hidden>Load winner’s poster</button>
@@ -59,7 +61,8 @@
       </aside>
     </div>
   </main>
-  <dialog id="movie-search-dialog" class="modal movie-search-modal" aria-labelledby="movie-search-title"><button class="modal-close quiet" id="close-movie-search" aria-label="Close movie search">×</button><h2 id="movie-search-title">Add movies</h2><p>Session only</p><form id="movie-search-form" class="movie-search-form"><input id="movie-query" type="search" required minlength="2" maxlength="100" placeholder="Movie title…" aria-label="Search Letterboxd movies" autocomplete="off"><button id="movie-search-submit" class="primary">Search</button></form><p id="movie-search-status" role="status" hidden></p><a id="movie-search-source" class="search-source" href="https://www.wikidata.org/wiki/Property:P6127" target="_blank" rel="noopener noreferrer" hidden>Results via Wikidata</a><div id="movie-search-results" class="movie-search-results"></div></dialog>
+  <dialog id="manual-profile-dialog" class="modal" aria-labelledby="manual-profile-title"><button id="close-manual-profile" class="modal-close quiet" aria-label="Close">×</button><h2 id="manual-profile-title">Create profile</h2><form id="manual-profile-form"><label for="manual-profile-name">Profile name</label><div class="url-box"><input id="manual-profile-name" required maxlength="80" placeholder="Movie night" autocomplete="off"><button class="primary" type="submit">Create</button></div></form></dialog>
+  <dialog id="movie-search-dialog" class="modal movie-search-modal" aria-labelledby="movie-search-title"><button class="modal-close quiet" id="close-movie-search" aria-label="Close movie search">×</button><h2 id="movie-search-title">Add movies</h2><p id="movie-search-note">Session only</p><form id="movie-search-form" class="movie-search-form"><input id="movie-query" type="search" required minlength="2" maxlength="100" placeholder="Movie title…" aria-label="Search Letterboxd movies" autocomplete="off"><button id="movie-search-submit" class="primary">Search</button></form><p id="movie-search-status" role="status" hidden></p><a id="movie-search-source" class="search-source" href="https://www.wikidata.org/wiki/Property:P6127" target="_blank" rel="noopener noreferrer" hidden>Results via Wikidata</a><div id="movie-search-results" class="movie-search-results"></div></dialog>
   <dialog id="delete-profile-dialog" class="modal" aria-labelledby="delete-profile-title"><h2 id="delete-profile-title">Delete profile?</h2><p id="delete-profile-name"></p><div class="delete-actions"><button id="cancel-delete-profile" class="quiet" autofocus>Cancel</button><button id="confirm-delete-profile" class="primary">Delete</button></div></dialog>
   <dialog id="mode-dialog" class="modal">
     <button class="modal-close quiet" id="close-mode" aria-label="Close">×</button><h2>Spin mode</h2><p id="mode-description"></p>

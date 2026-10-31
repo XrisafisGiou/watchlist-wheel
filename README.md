@@ -7,6 +7,8 @@ A simple movie picker for public Letterboxd watchlists.
 ## Features
 
 - Enter a Letterboxd username or watchlist URL and save or delete profiles in your browser. Deleting a profile asks for confirmation.
+- Create a named manual profile from the home screen and search for movies to save in it. Remove movies with the × on their poster.
+- Import a public Letterboxd movie list by URL and save it as a profile. Lists refresh on every opening. Manual profiles and lists offer a remembered **Remove winner** toggle; only the winning movie is removed (or the chosen film from a shortlist). List removals stay excluded after refresh and do not edit your Letterboxd account.
 - Open multiple saved profiles to find movies common to all of them.
 - Browse 36 movies per page, jump to the first or last page, search, sort by title, year, or duration (shortest or longest first), and select movies across pages. Runtimes appear beside release years; movie titles link to Letterboxd in a new tab. Unknown durations sort last.
 - Optionally filter by maximum duration, genre, and one or more decades. Genre and decade buttons cycle through include, exclude, and neutral; exclusions take priority. Apply updates both the grid and wheel. All decades from the 2020s down to the 1850s are available, using release years already loaded with the watchlist.

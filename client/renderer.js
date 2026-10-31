@@ -277,8 +277,9 @@ async function renderGrid() {
     const title = document.createElement('a'); title.className = 'movie-title'; title.textContent = movie.title; title.href = movie.url; title.target = '_blank'; title.rel = 'noopener noreferrer';
     const year = document.createElement('span'); year.className = 'movie-year'; year.textContent = movieDetails(movie);
     select.append(poster); card.append(select, title, year); fragment.append(card);
-    if (movie.sessionOnly) {
-      const remove = document.createElement('button'); remove.className = 'remove-session'; remove.textContent = '×'; remove.title = 'Remove from session'; remove.setAttribute('aria-label', `Remove ${movie.title} from session`); remove.disabled = busy;
+    if (movie.sessionOnly || collection.kind === 'manual') {
+      const destination = collection.kind === 'manual' ? 'profile' : 'session';
+      const remove = document.createElement('button'); remove.className = 'remove-session'; remove.textContent = '×'; remove.title = `Remove from ${destination}`; remove.setAttribute('aria-label', `Remove ${movie.title} from ${destination}`); remove.disabled = busy;
       remove.addEventListener('click', () => removeTemporaryMovie(movie).catch(error => toast(error.message))); card.append(remove);
     }
     select.addEventListener('click', () => {
@@ -317,6 +318,8 @@ function updateSelection() {
   $('apply-runtime').disabled = (busy && !filteringRuntime) || gridLoading;
   $('clear-runtime').disabled = busy || gridLoading;
   $('spin').disabled = !wheelPool.length || busy || gridLoading;
+  $('again').disabled = !wheelPool.length || (lastSpinMode === 'shortlist' && wheelPool.length < 3);
+  $('again-shortlist').disabled = wheelPool.length < 3;
   drawWheel($('wheel'), wheelPool, rotation);
 }
 function resetRounds() {
@@ -344,7 +347,7 @@ function renderProfiles() {
     const button = document.createElement('button'); button.className = 'profile-button'; button.disabled = importing || deletingProfile;
     if (selectingProfiles) button.setAttribute('aria-pressed', String(selectedProfiles.has(profile.profileId)));
     const name = document.createElement('span'); name.textContent = profile.username;
-    const count = document.createElement('span'); count.textContent = profile.count + ' movies';
+    const count = document.createElement('span'); count.textContent = [profile.kind === 'manual' ? 'Manual' : profile.kind === 'list' ? 'List' : '', profile.count + ' movies'].filter(Boolean).join(' · ');
     button.append(name, count); button.addEventListener('click', () => {
       if (importing || deletingProfile) return;
       if (!selectingProfiles) return loadCollection(() => invoke('openProfile', profile.profileId));
@@ -375,7 +378,10 @@ async function openCollection(value) {
   $('search').value = ''; $('sort').value = 'original'; lastSort = 'original';
   $('library-description').textContent = value.username;
   $('refresh').hidden = !value.url;
-  $('empty-watchlist').textContent = value.profileIds ? 'No common movies.' : 'Watchlist is empty.';
+  $('remove-winner-option').hidden = !['manual','list'].includes(value.kind);
+  $('remove-winner').checked = !!value.removeWinner;
+  $('movie-search-note').textContent = value.kind === 'manual' ? 'Saved to this profile' : 'Session only';
+  $('empty-watchlist').textContent = value.profileIds ? 'No common movies.' : value.kind === 'manual' ? 'Add movies to get started.' : value.kind === 'list' ? 'No movies left.' : 'Watchlist is empty.';
   $('poster-warning').hidden = !value.missingPosters;
   $('poster-warning-text').textContent = value.missingPosters + ' posters unavailable.';
   resetRounds(); await renderGrid(); updateSelection();
@@ -388,7 +394,7 @@ function goHome() {
 }
 function setImportState(value) {
   importing = value;
-  for (const id of ['import-button', 'watchlist-url', 'csv']) $(id).disabled = value;
+  for (const id of ['import-button', 'watchlist-url', 'csv', 'create-manual', 'show-list-import', 'list-url', 'list-import-button']) $(id).disabled = value;
   for (const button of $('profile-list').querySelectorAll('button')) button.disabled = value;
   $('import-progress').hidden = !value;
   $('select-profiles').disabled = value;
@@ -397,7 +403,7 @@ function setImportState(value) {
 async function loadCollection(action) {
   if (importing) return;
   $('library').hidden = true; $('welcome').hidden = false;
-  $('import-error').hidden = true; $('progress-text').textContent = 'Loading watchlist…'; setImportState(true);
+  $('import-error').hidden = true; $('progress-text').textContent = 'Loading…'; setImportState(true);
   try { const value = await action(); if (value) await openCollection(value); await loadProfiles(); }
   catch (error) { $('import-error').textContent = error.message; $('import-error').hidden = false; }
   finally { setImportState(false); }
@@ -408,6 +414,7 @@ function setBusy(value) {
   $('first-page').disabled = $('previous-page').disabled = value || gridLoading || pageNumber <= 1;
   $('last-page').disabled = $('next-page').disabled = value || gridLoading || pageNumber >= Math.ceil(visibleMovies().length / pageSize);
   $('max-runtime').disabled = value;
+  $('remove-winner').disabled = value;
   $('enable-duration').disabled = value;
   $('genre-filter').disabled = value;
   $('decade-filter').disabled = value;
@@ -554,8 +561,12 @@ async function showWinner(movie) {
   $('round-status').textContent = `Tonight’s pick: ${movie.title}`;
   $('winner-title').textContent = movie.title; $('winner-title').href = movie.url; $('winner-year').textContent = movieDetails(movie);
   $('winner-poster').replaceChildren(poster);
+  if (collection.removeWinner && ['manual','list'].includes(collection.kind) && await invoke('removeMovie', movie.id, true)) {
+    collection.movies = collection.movies.filter(value => value.id !== movie.id); selected.delete(movie.id);
+    await renderGrid();
+  }
   for (const card of $('movie-grid').children) card.classList.toggle('won', card.dataset.id === movie.id);
-  closeSpinFocus(); $('winner-dialog').showModal(); fanfare();
+  updateSelection(); closeSpinFocus(); $('winner-dialog').showModal(); fanfare();
   } catch (error) { $('round-status').textContent = error.message; $('retry-winner').hidden = false; }
 }
 async function showShortlist(movies) {
@@ -596,8 +607,8 @@ function renderMovieSearch() {
     const link = document.createElement('a'); link.textContent = movie.title; link.href = movie.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
     const year = document.createElement('span'); year.className = 'movie-year'; year.textContent = movie.year; info.append(link, year);
     const existing = collection?.movies.find(value => value.id === movie.id);
-    const add = document.createElement('button'); add.className = 'quiet'; add.textContent = existing ? existing.sessionOnly ? 'Added' : 'In watchlist' : 'Add'; add.disabled = addingMovie || !!existing;
-    add.setAttribute('aria-label', existing ? `${movie.title}: ${add.textContent}` : `Add ${movie.title} to session`);
+    const add = document.createElement('button'); add.className = 'quiet'; add.textContent = existing ? existing.sessionOnly || collection.kind === 'manual' ? 'Added' : collection.kind === 'list' ? 'In list' : 'In watchlist' : 'Add'; add.disabled = addingMovie || !!existing;
+    add.setAttribute('aria-label', existing ? `${movie.title}: ${add.textContent}` : `Add ${movie.title} to ${collection.kind === 'manual' ? 'profile' : 'session'}`);
     add.addEventListener('click', () => addTemporaryMovie(movie).catch(error => toast(error.message)));
     row.append(info, add); return row;
   }));
@@ -614,14 +625,14 @@ async function addTemporaryMovie(movie) {
     $('search').value = ''; resetRounds();
     const index = visibleMovies().findIndex(value => value.id === result.movie.id); pageNumber = index < 0 ? 1 : Math.floor(index / pageSize) + 1;
     await renderGrid(); $('movie-search-status').hidden = true;
-    toast(eligible ? 'Added to this session.' : 'Added to session. Hidden by current filters.');
+    toast(collection.kind === 'manual' ? eligible ? 'Saved to profile.' : 'Saved to profile. Hidden by current filters.' : eligible ? 'Added to this session.' : 'Added to session. Hidden by current filters.');
   } catch (error) { $('movie-search-status').hidden = false; $('movie-search-status').textContent = error.message; }
   finally { addingMovie = false; setBusy(false); updateSelection(); $('movie-query').disabled = false; $('movie-search-submit').disabled = false; renderMovieSearch(); }
 }
 async function removeTemporaryMovie(movie) {
   if (busy || gridLoading) return;
   setBusy(true);
-  try { await invoke('removeSessionMovie', movie.id); collection.movies = collection.movies.filter(value => value.id !== movie.id); selected.delete(movie.id); resetRounds(); await renderGrid(); }
+  try { await invoke(collection.kind === 'manual' ? 'removeMovie' : 'removeSessionMovie', movie.id); collection.movies = collection.movies.filter(value => value.id !== movie.id); selected.delete(movie.id); resetRounds(); await renderGrid(); }
   finally { setBusy(false); updateSelection(); }
 }
 
@@ -631,6 +642,24 @@ $('change').addEventListener('click', goHome);
 $('minimize-spin').addEventListener('click', closeSpinFocus);
 $('spin-dialog').addEventListener('close', () => { if (!$('spin-dialog').open) restoreWheelLocation(); });
 $('add-movies').addEventListener('click', () => { if (busy || gridLoading || !collection) return; renderMovieSearch(); $('movie-search-status').hidden = true; $('movie-search-dialog').showModal(); $('movie-query').focus(); });
+$('create-manual').addEventListener('click', () => { if (importing || deletingProfile) return; $('manual-profile-dialog').showModal(); $('manual-profile-name').focus(); });
+$('close-manual-profile').addEventListener('click', () => $('manual-profile-dialog').close());
+$('manual-profile-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (importing) return;
+  const name = $('manual-profile-name').value.trim(); if (!name) return;
+  $('manual-profile-dialog').close(); let created = false;
+  await loadCollection(async () => { const value = await invoke('createManualProfile', name); created = true; return value; });
+  if (created && !$('library').hidden) { $('manual-profile-name').value = ''; $('add-movies').click(); }
+});
+$('show-list-import').addEventListener('click', () => { if (importing) return; $('list-form').hidden = !$('list-form').hidden; $('show-list-import').setAttribute('aria-expanded', String(!$('list-form').hidden)); if (!$('list-form').hidden) $('list-url').focus(); });
+$('list-form').addEventListener('submit', event => { event.preventDefault(); loadCollection(() => invoke('importList', $('list-url').value)); });
+$('remove-winner').addEventListener('change', async () => {
+  if (busy || gridLoading) { $('remove-winner').checked = !!collection.removeWinner; return; }
+  const enabled = $('remove-winner').checked; setBusy(true);
+  try { await invoke('setRemoveWinner', enabled); collection.removeWinner = enabled; }
+  catch (error) { $('remove-winner').checked = !!collection.removeWinner; toast(error.message); }
+  finally { setBusy(false); updateSelection(); }
+});
 $('close-movie-search').addEventListener('click', () => $('movie-search-dialog').close());
 $('movie-search-dialog').addEventListener('close', () => { movieSearchVersion++; invoke('cancelMovieSearch').catch(()=>{}); $('movie-search-submit').disabled = addingMovie; });
 $('movie-search-form').addEventListener('submit', async event => {
@@ -663,12 +692,12 @@ $('select-profiles').addEventListener('click', () => { if (importing) return; se
 $('open-common').addEventListener('click', () => { if (selectedProfiles.size >= 2) loadCollection(() => invoke('openProfiles', [...selectedProfiles])); });
 $('import-form').addEventListener('submit', event => { event.preventDefault(); loadCollection(() => invoke('importWatchlist', $('watchlist-url').value)); });
 $('csv').addEventListener('click', () => loadCollection(() => invoke('importCsv')));
-$('refresh').addEventListener('click', () => loadCollection(() => invoke('importWatchlist', collection.url)));
+$('refresh').addEventListener('click', () => { if (busy || gridLoading) return; loadCollection(() => invoke('openProfile', collection.profileId)); });
 $('retry-posters').addEventListener('click', () => renderGrid());
 $('cancel-import').addEventListener('click', () => invoke('cancelImport').catch(error => toast(error.message)));
 desktop?.onProgress(value => {
   if (value.stage === 'metadata') { $('runtime-status').textContent = `Loading movie data ${value.done}/${value.total}`; return; }
-  $('progress-text').textContent = value.stage === 'posters' ? 'Loading posters ' + value.done + '/' + value.total : 'Watchlist page ' + value.page + '/' + value.pages;
+  $('progress-text').textContent = value.stage === 'posters' ? 'Loading posters ' + value.done + '/' + value.total : 'Loading page ' + value.page + '/' + value.pages;
 });
 $('search').addEventListener('input', () => { pageNumber = 1; renderGrid(); }); $('sort').addEventListener('change', () => sortCollection().catch(error => toast(error.message)));
 $('previous-page').addEventListener('click', () => { if (busy || gridLoading) return; pageNumber--; renderGrid(); });

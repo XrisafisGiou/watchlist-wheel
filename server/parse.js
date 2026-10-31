@@ -11,23 +11,31 @@ export function filmUrl(input) {
  if(url.origin!=='https://letterboxd.com'||url.username||url.password||!/^\/film\/[\w-]+\/$/.test(url.pathname))throw Error('Invalid movie URL.');
  return url.origin+url.pathname;
 }
-export function parsePage(html,search=false) {
+export function listUrl(input) {
+ const url=new URL(input);
+ if(!['https://letterboxd.com','https://www.letterboxd.com'].includes(url.origin)||url.username||url.password||!/^\/[\w-]+\/list\/[\w-]+\/?$/.test(url.pathname))throw Error('Use a Letterboxd movie list URL.');
+ return 'https://letterboxd.com'+url.pathname.toLowerCase().replace(/\/?$/,'/');
+}
+export function parsePage(html,search=false,list=false) {
  const root=parseDocument(html);const elements=getElementsByTagName('*',root,true);const movies=new Map();let pages=1,nextPage=null;
  for(const element of elements){
   const a=element.attribs||{};
   if((a['data-component-class']==='LazyPoster'&&a['data-item-link'])||a['data-film-slug']){
+   if(list){let parent=element.parent;while(parent&&!/(^|\s)poster-list(\s|$)/.test(parent.attribs?.class||''))parent=parent.parent;if(!parent)continue;}
    let url;try{url=filmUrl(a['data-item-link']||'/film/'+a['data-film-slug']+'/');}catch{continue;}
    const image=getElementsByTagName('img',element,true)[0];const full=a['data-item-name']||a['data-film-name']||image?.attribs.alt||'';
    const year=full.match(/\((\d{4})\)$/)?.[1]||a['data-film-release-year']||'';
    movies.set(url,{id:url,url,title:full.replace(/\s*\(\d{4}\)$/,''),year,poster:''});
   }
-  if(element.name==='a'&&a.href?.includes('/watchlist/page/')){
+  if(element.name==='a'&&a.href&&(list?/\/list\/[\w-]+\/page\//.test(a.href):a.href.includes('/watchlist/page/'))){
    const number=Number(a.href.match(/\/page\/(\d+)\//)?.[1]);if(number)pages=Math.max(pages,number);
    if((a.class||'').split(' ').includes('next'))nextPage=number;
   }
  }
- if(!movies.size&&!(search?/search/i:/watchlist/i).test(textContent(getElementsByTagName('title',root,true)[0]||root)))throw Error('Letterboxd returned an unreadable page.');
- return{movies:[...movies.values()],pages,nextPage};
+ const title=textContent(getElementsByTagName('title',root,true)[0]||root);
+ if(!movies.size&&!(list?/a list of films|list by/i:search?/search/i:/watchlist/i).test(title))throw Error('Letterboxd returned an unreadable page.');
+ let name='';if(list){name=elements.find(element=>element.name==='meta'&&element.attribs?.property==='og:title')?.attribs.content||'';if(!name){const heading=elements.find(element=>element.name==='h1'&&/(^|\s)title(?:-1)?(\s|$)/.test(element.attribs?.class||''));name=(heading?textContent(heading):title.replace(/^‎/,'').split(', a list of films')[0]).trim();}}
+ return{movies:[...movies.values()],pages,nextPage,...(list?{name}:{})};
 }
 export function parseRuntime(html){
  const root=typeof html==='string'?parseDocument(html):html;let minutes=null;
