@@ -41,7 +41,7 @@ async function switchProfileTab(tab,refresh=false) {
     if (tab === 'stats') { const value = await invoke('userStats',profileOwner.profileId); activeTab = tab; $('stats-error').hidden = true; showCachedStats(value); }
     else {
       $('movie-workspace').hidden = true; $('tab-progress').hidden = false; $('tab-progress').textContent = 'Loading…';
-      const value = await invoke(tab === 'films' ? 'openUserFilms' : 'openProfile',profileOwner.profileId,refresh);
+      const value = await invoke(tab === 'films' ? 'openUserFilms' : 'openUserWatchlist',profileOwner.profileId,refresh);
       await openCollection(value);
     }
   } catch (error) { toast(error.message); }

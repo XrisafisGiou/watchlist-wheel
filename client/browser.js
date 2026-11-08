@@ -2,7 +2,7 @@ import {searchMappedMovies} from './movie-search.js';
 import {readUserData,writeUserData,deleteUserData} from './user-data.js';
 import {buildStats,statsVersion} from './stats.js';
 import {createBatchedJson,abortableDelay} from './requests.js';
-const listeners=new Set();let active=null;let blobUrls=[];let currentCollection=null;let movieSearch=null;
+const listeners=new Set();let active=null;let blobUrls=[];let currentCollection=null;let movieSearch=null;let watchlistSession=null;
 const progress=value=>listeners.forEach(listener=>listener(value));
 const json=createBatchedJson({report:progress});
 const database=new Promise((resolve,reject)=>{const request=indexedDB.open('watchlist-wheel',1);request.onupgradeneeded=()=>{request.result.createObjectStore('profiles',{keyPath:'profileId'});request.result.createObjectStore('artwork',{keyPath:'id'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(Error('Could not open browser storage.'));});
@@ -13,6 +13,7 @@ async function save(value){if(value.profileIds)return value;value.profileId||=va
 async function prepare(value,signal){
  blobUrls.forEach(url=>URL.revokeObjectURL(url));blobUrls=[];
  currentCollection=value;
+ if(!value.view&&!value.kind&&!value.profileIds&&/^https:\/\/letterboxd\.com\/[\w-]+\/watchlist\/$/.test(value.url))watchlistSession=value;
  value.movies.forEach(movie=>{movie.posterKey||=movie.poster;movie.poster='';});
  signal.throwIfAborted();return save(value);
 }
@@ -85,6 +86,7 @@ async function importCsv(){
 }
 const wrap=fn=>async(...args)=>{try{return{ok:true,value:await fn(...args)};}catch(error){return{ok:false,error:error.name==='AbortError'?'Loading cancelled.':error.message};}};
 window.desktop={
+ openUserWatchlist:wrap(id=>operation(async signal=>{const value=watchlistSession?.profileId===id?watchlistSession:await userProfile(id);return currentCollection===value?value:prepare(value,signal);})),
  openUserFilms:wrap((id,refresh=false)=>operation(async signal=>{const profile=await userProfile(id),cache=await readUserData(id);return prepare(!refresh&&cache.films?cache.films:await fetchFilms(profile,signal),signal);})),
  userStats:wrap(async id=>{await userProfile(id);const cache=await readUserData(id);return cache.stats?.version===statsVersion?cache.stats:null;}),
  generateUserStats:wrap(id=>operation(async signal=>{
@@ -142,7 +144,7 @@ window.desktop={
  loadPosters:wrap(ids=>operation(async signal=>{if(!currentCollection)throw Error('Open a profile first.');const movies=currentCollection.movies.filter(movie=>ids.includes(movie.id));const value=await preparePosters({movies},signal);await save(currentCollection);return value;})),
  importWatchlist:wrap(importWatchlist),cancelImport:wrap(()=>active?.abort()),importCsv:wrap(importCsv),
  load:wrap(async()=>(await read('profiles')).map(({profileId,username,url,kind,movies})=>({profileId,username,url,kind,count:movies.length}))),
- deleteProfile:wrap(id=>operation(async()=>{await deleteUserData(id);await removeProfile(id);if(currentCollection?.profileId===id)currentCollection=null;})),
+ deleteProfile:wrap(id=>operation(async()=>{await deleteUserData(id);await removeProfile(id);if(currentCollection?.profileId===id)currentCollection=null;if(watchlistSession?.profileId===id)watchlistSession=null;})),
  openProfile:wrap(id=>operation(async signal=>prepare(await freshProfile(id,signal),signal))),
  openProfiles:wrap(ids=>operation(async signal=>{
   const unique=[...new Set(ids)];if(unique.length<2)throw Error('Select at least two profiles.');
