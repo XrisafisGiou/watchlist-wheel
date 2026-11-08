@@ -8,6 +8,7 @@ export function watchlistUrl(input) {
 }
 export function filmUrl(input) {
  const url=new URL(input,'https://letterboxd.com');
+ if(url.origin==='https://boxd.it'&&!url.username&&!url.password&&/^\/[A-Za-z0-9]+\/?$/.test(url.pathname))return url.origin+url.pathname.replace(/\/$/,'');
  if(url.origin!=='https://letterboxd.com'||url.username||url.password||!/^\/film\/[\w-]+\/$/.test(url.pathname))throw Error('Invalid movie URL.');
  return url.origin+url.pathname;
 }
@@ -76,6 +77,7 @@ export function parseFilmDetails(html){
  const unique=(key,name,url)=>{name=String(name||'').trim();if(name&&!value[key].some(item=>url?item.url===url:item===name))value[key].push(url?{name,url}:name);};
  function inspect(data){if(!data||typeof data!=='object')return;if(Array.isArray(data)){data.forEach(inspect);return;}
   if(data['@type']==='Movie'){
+   try{const canonical=filmUrl(data.url||data['@id']);if(canonical.startsWith('https://letterboxd.com/film/'))value.canonicalUrl=canonical;}catch{}
    const average=Number(data.aggregateRating?.ratingValue);if(average>=.5&&average<=5)value.averageRating=average;
    for(const country of [].concat(data.countryOfOrigin||[]))unique('countries',typeof country==='string'?country:country.name);
   }if(data['@graph'])inspect(data['@graph']);

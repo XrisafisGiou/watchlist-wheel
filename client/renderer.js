@@ -8,6 +8,7 @@ let profileOwner = null;
 let activeTab = 'watchlist';
 let tabLoading = false;
 let statsGenerating = false;
+let filmsAvailable = false;
 let draftRating = null;
 let appliedRating = null;
 const starRange = createStarRange($('rating-stars'),value=>{draftRating=value?{kind:'range',...value}:null;syncRating();syncApplyVisibility();});
@@ -22,14 +23,17 @@ function syncRating() {
 }
 function syncProfileView() {
   $('profile-tabs').hidden = !profileOwner;
+  $('import-films-zip').hidden = !profileOwner;
+  $('import-films-zip').textContent = filmsAvailable ? 'Replace export ZIP' : 'Import export ZIP';
   for (const tab of ['watchlist','films','stats']) { const button = $('tab-'+tab); if (activeTab === tab) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current'); }
   $('movie-workspace').hidden = activeTab === 'stats' || tabLoading;
   $('stats-screen').hidden = activeTab !== 'stats';
   $('add-movies').hidden = activeTab !== 'watchlist';
-  $('refresh').hidden = activeTab === 'stats' || !collection?.url;
+  $('refresh').hidden = activeTab !== 'watchlist' || !collection?.url;
 }
 function showCachedStats(value) {
   $('stats-content').replaceChildren(); $('stats-intro').hidden = !!value;
+  $('stats-intro').textContent = filmsAvailable ? 'Generate stats from imported films.' : 'Import your Letterboxd export ZIP to generate stats.';
   $('stats-date').textContent = value ? 'Generated '+new Date(value.generatedAt).toLocaleString() : '';
   $('generate-stats').textContent = value ? 'Regenerate' : 'Generate stats';
   if (value) renderStats($('stats-content'), value);
@@ -48,7 +52,7 @@ async function switchProfileTab(tab,refresh=false) {
   finally { tabLoading = false; $('tab-progress').hidden = true; syncProfileView(); setBusy(false); updateSelection(); }
 }
 async function generateProfileStats() {
-  if (!profileOwner || busy || tabLoading || gridLoading) return;
+  if (!profileOwner || !filmsAvailable || busy || tabLoading || gridLoading) return;
   statsGenerating = true; setBusy(true); $('stats-progress').hidden = false; $('stats-error').hidden = true;
   $('stats-progress-bar').value = 0; $('stats-progress-value').textContent = '0%'; $('stats-progress-label').textContent = 'Loading films…';
   try { showCachedStats(await invoke('generateUserStats',profileOwner.profileId)); }
@@ -431,6 +435,7 @@ async function openCollection(value) {
   lastSpinMode = null;
   collection = value; selected = new Set(); pageNumber = 1; maxRuntime = null;
   profileOwner = !value.kind && !value.profileIds && (value.view === 'films' || /^https:\/\/letterboxd\.com\/[\w-]+\/watchlist\/$/.test(value.url)) ? {profileId:value.profileId,username:value.username} : null;
+  filmsAvailable = profileOwner ? await invoke('hasFilmsExport',profileOwner.profileId) : false;
   activeTab = value.view === 'films' ? 'films' : 'watchlist';
   draftRating = appliedRating = null; $('rating-section').open = false; $('rating-section').hidden = activeTab !== 'films'; syncRating();
   for (const option of [...$('sort').querySelectorAll('option[data-rating]')]) option.remove();
@@ -450,7 +455,7 @@ async function openCollection(value) {
   $('remove-winner-option').hidden = !['manual','list'].includes(value.kind);
   $('remove-winner').checked = !!value.removeWinner;
   $('movie-search-note').textContent = value.kind === 'manual' ? 'Saved to this profile' : 'Session only';
-  $('empty-watchlist').textContent = value.view === 'films' ? 'No watched films.' : value.profileIds ? 'No common movies.' : value.kind === 'manual' ? 'Add movies to get started.' : value.kind === 'list' ? 'No movies left.' : 'Watchlist is empty.';
+  $('empty-watchlist').textContent = value.view === 'films' ? value.requiresImport ? 'Import your Letterboxd export ZIP to load films.' : 'No watched films.' : value.profileIds ? 'No common movies.' : value.kind === 'manual' ? 'Add movies to get started.' : value.kind === 'list' ? 'No movies left.' : 'Watchlist is empty.';
   $('poster-warning').hidden = !value.missingPosters;
   $('poster-warning-text').textContent = value.missingPosters + ' posters unavailable.';
   resetRounds(); await renderGrid(); updateSelection();
@@ -483,7 +488,8 @@ function setBusy(value) {
   $('first-page').disabled = $('previous-page').disabled = value || gridLoading || pageNumber <= 1;
   $('last-page').disabled = $('next-page').disabled = value || gridLoading || pageNumber >= Math.ceil(visibleMovies().length / pageSize);
   $('max-runtime').disabled = value;
-  for (const id of ['tab-watchlist','tab-films','tab-stats','generate-stats','rating-none','rating-clear','refresh','add-movies','change']) $(id).disabled = value;
+  for (const id of ['tab-watchlist','tab-films','tab-stats','generate-stats','rating-none','rating-clear','refresh','add-movies','change','import-films-zip']) $(id).disabled = value;
+  $('generate-stats').disabled = value || !filmsAvailable;
   starRange.disable(value || gridLoading);
   $('remove-winner').disabled = value;
   $('enable-duration').disabled = value;
@@ -709,6 +715,13 @@ async function removeTemporaryMovie(movie) {
 }
 
 $('sound').addEventListener('click', () => { sound = !sound; setSound(); initAudio(); tone(660, .1); }); setSound();
+$('import-films-zip').addEventListener('click', async () => {
+  if (!profileOwner || busy || gridLoading || tabLoading) return;
+  setBusy(true); $('tab-progress').hidden = false; $('tab-progress').textContent = 'Importing…';
+  try { const value = await invoke('importFilmsExport',profileOwner.profileId); if (value) await openCollection(value); }
+  catch (error) { toast(error.message); }
+  finally { $('tab-progress').hidden = true; syncProfileView(); setBusy(false); updateSelection(); }
+});
 for (const tab of ['watchlist','films','stats']) $('tab-'+tab).addEventListener('click', () => switchProfileTab(tab));
 $('generate-stats').addEventListener('click', generateProfileStats);
 $('cancel-stats').addEventListener('click', () => { if (statsGenerating) invoke('cancelImport').catch(error => toast(error.message)); });
@@ -769,7 +782,7 @@ $('select-profiles').addEventListener('click', () => { if (importing) return; se
 $('open-common').addEventListener('click', () => { if (selectedProfiles.size >= 2) loadCollection(() => invoke('openProfiles', [...selectedProfiles])); });
 $('import-form').addEventListener('submit', event => { event.preventDefault(); loadCollection(() => invoke('importWatchlist', $('watchlist-url').value)); });
 $('csv').addEventListener('click', () => loadCollection(() => invoke('importCsv')));
-$('refresh').addEventListener('click', () => { if (busy || gridLoading) return; if (activeTab === 'films') switchProfileTab('films',true); else loadCollection(() => invoke('openProfile', collection.profileId)); });
+$('refresh').addEventListener('click', () => { if (busy || gridLoading || activeTab !== 'watchlist') return; loadCollection(() => invoke('openProfile', collection.profileId)); });
 $('retry-posters').addEventListener('click', () => renderGrid());
 $('cancel-import').addEventListener('click', () => invoke('cancelImport').catch(error => toast(error.message)));
 desktop?.onProgress(value => {

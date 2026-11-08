@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {buildStats} from '../client/stats.js';
 import {filmsUrl,parsePage,parseFilmDetails} from '../server/parse.js';
-import {GET as films} from '../api/films.js';
+import app from '../server/entry.js';
 const fixture='<title>Films watched by Test • Letterboxd</title><ul class="grid -p70"><li class="griditem"><div data-component-class="LazyPoster" data-item-name="Alien (1979)" data-item-link="/film/alien/"></div><p><span class="rating rated-9">★★★★½</span><span class="like">♥</span></p></li><li class="griditem"><div data-film-slug="unrated"><img alt="Unrated"></div></li></ul><a class="next" href="/test/films/page/2/">Next</a><a href="/test/films/page/4/">4</a><aside><div data-film-slug="suggested"><img alt="Suggested"></div></aside>';
 test('watched films retain half-star ratings and likes, exclude suggestions and follow films pages',()=>{
  const parsed=parsePage(fixture,false,false,true);assert.equal(parsed.movies.length,2);assert.equal(parsed.movies[0].rating,4.5);assert.equal(parsed.movies[0].liked,true);assert.equal(parsed.movies[1].rating,null);assert.equal(parsed.pages,4);assert.equal(parsed.nextPage,2);
@@ -21,7 +21,4 @@ test('stats count unique watched films and unique category credits, omit unknown
  assert.equal(result.genres[0].count,2);assert.equal(result.directors[0].count,2);assert.equal(result.cast[0].count,1);assert.equal(result.highestDecades[0].name,'1990s');assert.equal(result.higher[0].id,'a');assert.equal(result.lower[0].id,'b');assert.equal(result.years.length,2);
  assert.equal(buildStats([]).averageRating,null);assert.equal(buildStats([]).count,0);
 });
-test('watched films API refreshes upstream without browser or CDN caches',async()=>{
- const original=globalThis.fetch;let requestUrl;globalThis.fetch=async(url,options)=>{requestUrl=String(url);assert.equal(options.cache,'no-store');return new Response(fixture);};
- try{const response=await films(new Request('https://app.example/api/films?url='+encodeURIComponent('https://letterboxd.com/test/films/')+'&page=2'));assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(response.headers.get('cdn-cache-control'),'no-store');assert.equal((await response.json()).movies[0].rating,4.5);assert.equal(requestUrl,'https://letterboxd.com/test/films/page/2/');}finally{globalThis.fetch=original;}
-});
+test('direct watched-film API is removed',async()=>{const response=await app.fetch(new Request('https://app.example/api/films?url='+encodeURIComponent('https://letterboxd.com/test/films/')),{},{});assert.equal(response.status,404);});

@@ -1,11 +1,11 @@
-import {watchlistUrl,listUrl,filmsUrl,filmUrl,parsePage,parseFilmDetails} from './parse.js';
+import {watchlistUrl,listUrl,filmUrl,parsePage,parseFilmDetails} from './parse.js';
 import {assets} from './assets.js';
 import {searchMovies} from './search.js';
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json; charset=utf-8','x-content-type-options':'nosniff','cache-control':'no-store'}});
 async function remote(url,image=false,fresh=false,timeout=20000){
  for(let redirect=0;redirect<4;redirect++){
   const response=await fetch(url,{redirect:'manual',cache:fresh?'no-store':'default',signal:AbortSignal.timeout(timeout),headers:{Accept:image?'image/*':'text/html','User-Agent':'Mozilla/5.0 (compatible; WatchlistWheel/1.1; public watchlist reader)',...(fresh?{'Cache-Control':'no-cache','Pragma':'no-cache'}:{})}});
-  if(response.status>=300&&response.status<400){const next=new URL(response.headers.get('location'),url);if(image?!['https://a.ltrbxd.com','https://s.ltrbxd.com'].includes(next.origin):next.origin!=='https://letterboxd.com')throw Error('Unexpected redirect.');url=next.href;continue;}
+  if(response.status>=300&&response.status<400){const next=new URL(response.headers.get('location'),url);if(image?!['https://a.ltrbxd.com','https://s.ltrbxd.com'].includes(next.origin):next.origin!=='https://letterboxd.com')throw Error('Unexpected redirect.');if(new URL(url).origin==='https://boxd.it'&&!/^\/film\/[\w-]+\/$/.test(next.pathname))throw Error('This short link is not a movie.');url=next.href;continue;}
   if(!response.ok){const error=Error([403,429].includes(response.status)?'Letterboxd is limiting requests. Please retry after the cooldown.':response.status===404?'Watchlist, list or movie not found.':`Letterboxd returned ${response.status}.`);if([403,429,503].includes(response.status)){error.retryable=true;const header=response.headers.get('retry-after');const seconds=Number(header);error.retryAfter=Math.max(3,Math.min(120,Number.isFinite(seconds)&&seconds>0?seconds:header?Math.ceil((Date.parse(header)-Date.now())/1000)||3:3));}throw error;}
   return response;
  }
@@ -23,10 +23,10 @@ async function api(request,ctx){
  const url=new URL(request.url);
 
  let response,ttl=300;
- if(url.pathname==='/api/watchlist'||url.pathname==='/api/list'||url.pathname==='/api/films'){
-  const list=url.pathname==='/api/list',films=url.pathname==='/api/films';const base=(films?filmsUrl:list?listUrl:watchlistUrl)(url.searchParams.get('url')||'');const page=Number(url.searchParams.get('page')||1);
+ if(url.pathname==='/api/watchlist'||url.pathname==='/api/list'){
+  const list=url.pathname==='/api/list';const base=(list?listUrl:watchlistUrl)(url.searchParams.get('url')||'');const page=Number(url.searchParams.get('page')||1);
   if(!Number.isInteger(page)||page<1||page>1000)throw Error('Invalid page.');
-  const parsed=parsePage(await html(page===1?base:base+'page/'+page+'/',true),false,list,films);
+  const parsed=parsePage(await html(page===1?base:base+'page/'+page+'/',true),false,list);
   response=json({...parsed,username:new URL(base).pathname.split('/')[1],url:base});ttl=0;
   response.headers.set('vercel-cdn-cache-control','no-store');response.headers.set('cdn-cache-control','no-store');
  }else if(url.pathname==='/api/search'){
