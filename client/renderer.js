@@ -11,6 +11,20 @@ let statsGenerating = false;
 let statsPending = null;
 let draftRating = null;
 let appliedRating = null;
+let loadingCancelled = false;
+function beginLoading(label='Loading…') {
+  loadingCancelled = false; $('loading-title').textContent = label; $('loading-progress').removeAttribute('value');
+  $('cancel-loading').disabled = false; document.body.classList.add('loading-screen-open');
+  if (!$('loading-dialog').open) $('loading-dialog').showModal();
+}
+function endLoading() { if ($('loading-dialog').open) $('loading-dialog').close(); document.body.classList.remove('loading-screen-open'); }
+async function keepLoading(action) {
+  for (;;) {
+    if (loadingCancelled) { const error = Error('Loading cancelled.'); error.cancelled = true; throw error; }
+    try { return await action(); } catch (error) { if (loadingCancelled || error.cancelled || !error.retryable) throw error; }
+  }
+}
+function cancelLoading() { loadingCancelled = true; $('cancel-loading').disabled = true; invoke('cancelImport').catch(()=>{}); }
 const starRange = createStarRange($('rating-stars'),value=>{draftRating=value?{kind:'range',...value}:null;syncRating();syncApplyVisibility();});
 function stars(value) { return '★'.repeat(Math.floor(value)) + (value % 1 ? '½' : ''); }
 function matchesRating(movie) { return collection.view !== 'films' || !appliedRating || (appliedRating.kind === 'none' ? movie.rating === null || movie.rating === undefined : Number.isFinite(movie.rating) && movie.rating >= appliedRating.min && movie.rating <= appliedRating.max); }
@@ -23,6 +37,8 @@ function syncRating() {
 }
 function syncProfileView() {
   $('profile-tabs').hidden = !profileOwner;
+  $('import-profile-films').hidden = !profileOwner;
+  $('films-source').hidden = activeTab !== 'films' || collection?.source !== 'csv';
   for (const tab of ['watchlist','films','stats']) { const button = $('tab-'+tab); if (activeTab === tab) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current'); }
   $('movie-workspace').hidden = activeTab === 'stats' || tabLoading;
   $('stats-screen').hidden = activeTab !== 'stats';
@@ -31,36 +47,39 @@ function syncProfileView() {
 }
 function showCachedStats(value) {
   $('stats-content').replaceChildren(); $('stats-intro').hidden = !!value && !statsPending;
-  $('stats-intro').textContent = statsPending ? statsPending.phase === 'metadata' ? `${statsPending.done}/${statsPending.total} film details saved · Resume to continue.` : `${statsPending.pages} film pages saved · Resume to continue.` : 'Generate stats from watched films.';
+  $('stats-intro').textContent = statsPending ? 'Ready to continue.' : 'Generate stats from watched films.';
   $('stats-date').textContent = value ? 'Generated '+new Date(value.generatedAt).toLocaleString() : '';
-  $('generate-stats').textContent = statsPending ? 'Resume' : value ? 'Regenerate' : 'Generate stats';
+  $('generate-stats').textContent = statsPending ? 'Continue' : value ? 'Regenerate' : 'Generate stats';
   if (value) renderStats($('stats-content'), value);
 }
 async function switchProfileTab(tab,refresh=false) {
   if (!profileOwner || busy || importing || gridLoading || tabLoading || (activeTab === tab && !refresh)) return;
-  tabLoading = true; setBusy(true); $('poster-warning').hidden = true;
+  tabLoading = true; setBusy(true); $('poster-warning').hidden = true; let generateAfter = false;
   try {
-    if (tab === 'stats') { const value = await invoke('userStats',profileOwner.profileId); statsPending = await invoke('statsProgress',profileOwner.profileId); activeTab = tab; $('stats-error').hidden = true; showCachedStats(value); }
+    if (tab === 'stats') { const value = await invoke('userStats',profileOwner.profileId); statsPending = await invoke('statsProgress',profileOwner.profileId); activeTab = tab; $('stats-error').hidden = true; showCachedStats(value); generateAfter = !value || !!statsPending; }
     else {
       $('movie-workspace').hidden = true; $('tab-progress').hidden = false; $('tab-progress').textContent = 'Loading…';
-      const value = await invoke(tab === 'films' ? 'openUserFilms' : 'openProfile',profileOwner.profileId,refresh);
-      await openCollection(value);
+      beginLoading(tab === 'films' ? 'Loading films…' : 'Loading…');
+      const value = await keepLoading(()=>invoke(tab === 'films' ? 'openUserFilms' : 'openProfile',profileOwner.profileId,refresh));
+      await keepLoading(()=>openCollection(value));
     }
-  } catch (error) { toast(error.message); }
-  finally { tabLoading = false; $('tab-progress').hidden = true; syncProfileView(); setBusy(false); updateSelection(); }
+  } catch (error) { if (!loadingCancelled && !error.cancelled) toast('Couldn’t load movies. Please try again.'); }
+  finally { endLoading(); tabLoading = false; $('tab-progress').hidden = true; syncProfileView(); setBusy(false); updateSelection(); }
+  if (generateAfter) await generateProfileStats();
 }
 async function generateProfileStats() {
   if (!profileOwner || busy || tabLoading || gridLoading) return;
   statsGenerating = true; setBusy(true); $('stats-progress').hidden = false; $('stats-error').hidden = true;
+  beginLoading('Preparing stats…');
   $('stats-progress-bar').value = 0; $('stats-progress-value').textContent = '0%'; $('stats-progress-label').textContent = 'Loading films…';
-  try { const value = await invoke('generateUserStats',profileOwner.profileId); statsPending = null; showCachedStats(value); }
+  try { const value = await keepLoading(()=>invoke('generateUserStats',profileOwner.profileId)); statsPending = null; showCachedStats(value); }
   catch (error) {
     statsPending = await invoke('statsProgress',profileOwner.profileId).catch(()=>null);
-    $('generate-stats').textContent = statsPending ? 'Resume' : 'Generate stats';
-    $('stats-error').textContent = error.message + (statsPending ? ' Progress saved. Resume to continue.' : ''); $('stats-error').hidden = false;
-    if (statsPending) { $('stats-intro').hidden = false; $('stats-intro').textContent = statsPending.phase === 'metadata' ? `${statsPending.done}/${statsPending.total} film details saved.` : `${statsPending.pages} film pages saved.`; }
+    $('generate-stats').textContent = statsPending ? 'Continue' : 'Generate stats';
+    $('stats-error').textContent = 'Couldn’t finish loading. Please try again.'; $('stats-error').hidden = loadingCancelled || error.cancelled;
+    if (statsPending) { $('stats-intro').hidden = false; $('stats-intro').textContent = 'Ready to continue.'; }
   }
-  finally { statsGenerating = false; $('stats-progress').hidden = true; setBusy(false); updateSelection(); }
+  finally { endLoading(); statsGenerating = false; $('stats-progress').hidden = true; setBusy(false); updateSelection(); }
 }
 let profiles = [];
 let deletingProfile = false;
@@ -172,7 +191,7 @@ const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 async function invoke(method, ...args) {
   if (!desktop) throw new Error('Reload the page and try again.');
   const result = await desktop[method](...args);
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) { const error = new Error(result.error); error.retryable = result.retryable; error.cancelled = result.cancelled; throw error; }
   return result.value;
 }
 function toast(message) {
@@ -264,15 +283,16 @@ async function sortCollection() {
   const order = $('sort').value;
   if (!order.startsWith('duration-')) { lastSort = order; pageNumber = 1; await renderGrid(); return; }
   filteringRuntime = true; setBusy(true); syncApplyVisibility(); $('apply-runtime').textContent = 'Cancel';
+  beginLoading('Loading films…');
   $('runtime-status').hidden = false; $('runtime-status').textContent = 'Loading movie data…';
   try {
-    const metadata = await invoke('loadMetadata', false, true);
+    const metadata = await keepLoading(()=>invoke('loadMetadata', false, true));
     const byId = new Map(metadata.map(movie => [movie.id, movie]));
     collection.movies.forEach(movie => Object.assign(movie, byId.get(movie.id)));
     lastSort = order; pageNumber = 1; await renderGrid();
-  } catch (error) { $('sort').value = lastSort; toast(error.message); }
+  } catch (error) { $('sort').value = lastSort; if (!loadingCancelled && !error.cancelled) toast('Couldn’t load movies. Please try again.'); }
   finally {
-    filteringRuntime = false; $('apply-runtime').textContent = 'Apply'; syncApplyVisibility(); showFilterStatus(); setBusy(false); updateSelection();
+    endLoading(); filteringRuntime = false; $('apply-runtime').textContent = 'Apply'; syncApplyVisibility(); showFilterStatus(); setBusy(false); updateSelection();
   }
 }
 function movieDetails(movie) {
@@ -368,7 +388,7 @@ async function renderGrid() {
   $('reset-search').hidden = !$('search').value.trim();
   $('empty-watchlist').hidden = collection.movies.length > 0;
   $('select-visible').disabled = !movies.length;
-  } catch (error) { toast(error.message); }
+  } catch (error) { if ($('loading-dialog').open && (error.retryable || error.cancelled)) throw error; toast(error.message); }
   finally {
     gridLoading = false; $('grid-progress').hidden = true; $('movie-grid').hidden = false;
     $('first-page').disabled = $('previous-page').disabled = busy || pageNumber <= 1; $('last-page').disabled = $('next-page').disabled = busy || pageNumber >= pages;
@@ -480,9 +500,10 @@ async function loadCollection(action) {
   if (importing) return;
   $('library').hidden = true; $('welcome').hidden = false;
   $('import-error').hidden = true; $('progress-text').textContent = 'Loading…'; setImportState(true);
-  try { const value = await action(); if (value) await openCollection(value); await loadProfiles(); }
-  catch (error) { $('import-error').textContent = error.message; $('import-error').hidden = false; }
-  finally { setImportState(false); }
+  beginLoading();
+  try { const value = await keepLoading(action); if (value) await keepLoading(()=>openCollection(value)); await loadProfiles(); }
+  catch (error) { if (!loadingCancelled && !error.cancelled) { $('import-error').textContent = error.message; $('import-error').hidden = false; } }
+  finally { endLoading(); setImportState(false); }
 }
 function setBusy(value) {
   busy = value; document.body.classList.toggle('busy', value); $('spin').disabled = value || !wheelPool.length;
@@ -490,7 +511,7 @@ function setBusy(value) {
   $('first-page').disabled = $('previous-page').disabled = value || gridLoading || pageNumber <= 1;
   $('last-page').disabled = $('next-page').disabled = value || gridLoading || pageNumber >= Math.ceil(visibleMovies().length / pageSize);
   $('max-runtime').disabled = value;
-  for (const id of ['tab-watchlist','tab-films','tab-stats','generate-stats','rating-none','rating-clear','refresh','add-movies','change']) $(id).disabled = value;
+  for (const id of ['tab-watchlist','tab-films','tab-stats','generate-stats','rating-none','rating-clear','refresh','add-movies','change','import-profile-films']) $(id).disabled = value;
   starRange.disable(value || gridLoading);
   $('remove-winner').disabled = value;
   $('enable-duration').disabled = value;
@@ -508,10 +529,12 @@ async function applyRuntime() {
   const chosenDecades = new Set(draftDecades);
   const excludedDecades = new Set(draftExcludedDecades);
   const chosenRating = draftRating ? {...draftRating} : null;
+  const needsMetadata = limit !== null || chosenGenres.size || excludedGenres.size;
   filteringRuntime = true; setBusy(true); $('apply-runtime').textContent = 'Cancel';
+  if (needsMetadata) beginLoading('Loading films…');
   $('runtime-status').hidden = false; $('runtime-status').textContent = 'Loading movie data…';
   try {
-    const metadata = limit !== null || chosenGenres.size || excludedGenres.size ? await invoke('loadMetadata', chosenGenres.size > 0 || excludedGenres.size > 0, limit !== null) : [];
+    const metadata = needsMetadata ? await keepLoading(()=>invoke('loadMetadata', chosenGenres.size > 0 || excludedGenres.size > 0, limit !== null)) : [];
     const byId = new Map(metadata.map(movie => [movie.id, movie]));
     collection.movies.forEach(movie => Object.assign(movie, byId.get(movie.id)));
     maxRuntime = limit; appliedGenres = chosenGenres; appliedExcludedGenres = excludedGenres; appliedDecades = chosenDecades; appliedExcludedDecades = excludedDecades; appliedRating = chosenRating; pageNumber = 1;
@@ -521,7 +544,7 @@ async function applyRuntime() {
     await renderGrid();
   } catch (error) { toast(error.message); }
   finally {
-    filteringRuntime = false; $('apply-runtime').textContent = 'Apply';
+    if (needsMetadata) endLoading(); filteringRuntime = false; $('apply-runtime').textContent = 'Apply';
     showFilterStatus();
     setBusy(false); updateSelection();
   }
@@ -716,6 +739,14 @@ async function removeTemporaryMovie(movie) {
 }
 
 $('sound').addEventListener('click', () => { sound = !sound; setSound(); initAudio(); tone(660, .1); }); setSound();
+$('cancel-loading').addEventListener('click', cancelLoading);
+$('loading-dialog').addEventListener('cancel', event => { event.preventDefault(); cancelLoading(); });
+$('import-profile-films').addEventListener('click', async () => {
+  if (!profileOwner || busy || gridLoading || tabLoading) return; loadingCancelled = false; setBusy(true);
+  try { const value = await invoke('importFilmsCsv',profileOwner.profileId); if (value) { beginLoading('Loading films…'); await keepLoading(()=>openCollection(value)); } }
+  catch (error) { if (!loadingCancelled && !error.cancelled) toast(error.retryable ? 'Couldn’t load movies. Please try again.' : error.message); }
+  finally { endLoading(); setBusy(false); updateSelection(); }
+});
 for (const tab of ['watchlist','films','stats']) $('tab-'+tab).addEventListener('click', () => switchProfileTab(tab));
 $('generate-stats').addEventListener('click', generateProfileStats);
 $('cancel-stats').addEventListener('click', () => { if (statsGenerating) invoke('cancelImport').catch(error => toast(error.message)); });
@@ -780,24 +811,17 @@ $('refresh').addEventListener('click', () => { if (busy || gridLoading) return; 
 $('retry-posters').addEventListener('click', () => renderGrid());
 $('cancel-import').addEventListener('click', () => invoke('cancelImport').catch(error => toast(error.message)));
 desktop?.onProgress(value => {
-  if (value.stage === 'cooldown' || value.stage === 'batch-wait') {
-    const message = value.stage === 'cooldown' ? `Letterboxd is busy · retrying in ${value.seconds}s…` : 'Loading next batch…';
-    if (statsGenerating) $('stats-progress-label').textContent = message;
-    else if (tabLoading) $('tab-progress').textContent = message;
-    else if (filteringRuntime) $('runtime-status').textContent = message;
-    else if (gridLoading) $('grid-progress-text').textContent = message;
-    else $('progress-text').textContent = message;
-    return;
-  }
+  if (value.stage === 'cooldown' || value.stage === 'batch-wait') return;
   if (value.stage?.startsWith('stats-')) {
     const percentage = value.stage === 'stats-complete' ? 100 : value.stage === 'stats-films' ? Math.round(20*value.done/Math.max(1,value.total)) : 20+Math.round(79*value.done/Math.max(1,value.total));
-    $('stats-progress-bar').value = percentage; $('stats-progress-value').textContent = percentage+'%';
-    $('stats-progress-label').textContent = value.stage === 'stats-films' ? `Loading films · page ${value.done}/${value.total}` : value.stage === 'stats-complete' ? 'Complete' : `Loading film details · ${value.done}/${value.total}`; return;
+    $('stats-progress-bar').value = percentage; $('stats-progress-value').textContent = percentage+'%'; $('stats-progress-label').textContent = 'Preparing stats…';
+    if ($('loading-dialog').open) $('loading-progress').value = Math.max(Number($('loading-progress').value)||0,percentage); return;
   }
-  if (tabLoading && value.page) { $('tab-progress').textContent = `Loading films · page ${value.page}/${value.pages}`; return; }
-  if (value.stage === 'metadata') { $('runtime-status').textContent = `Loading movie data ${value.done}/${value.total}`; return; }
-  if (value.stage === 'posters' && gridLoading) $('grid-progress-text').textContent = `Loading posters · ${value.done}/${value.total}`;
-  $('progress-text').textContent = value.stage === 'posters' ? 'Loading posters ' + value.done + '/' + value.total : 'Loading page ' + value.page + '/' + value.pages;
+  if (value.stage === 'metadata') $('runtime-status').textContent = 'Loading…';
+  if (value.stage === 'posters') $('grid-progress-text').textContent = 'Loading posters…';
+  $('progress-text').textContent = 'Loading…'; $('tab-progress').textContent = 'Loading films…';
+  const total = value.total || value.pages, done = value.done ?? value.page;
+  if ($('loading-dialog').open && total) $('loading-progress').value = Math.min(99,Math.round(100*done/total));
 });
 $('search').addEventListener('input', () => { pageNumber = 1; renderGrid(); }); $('sort').addEventListener('change', () => sortCollection().catch(error => toast(error.message)));
 $('previous-page').addEventListener('click', () => { if (busy || gridLoading) return; pageNumber--; renderGrid(); });

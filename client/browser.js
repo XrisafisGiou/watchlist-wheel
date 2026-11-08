@@ -2,6 +2,7 @@ import {searchMappedMovies} from './movie-search.js';
 import {readUserData,writeUserData,deleteUserData} from './user-data.js';
 import {buildStats,statsVersion} from './stats.js';
 import {createBatchedJson,abortableDelay} from './requests.js';
+import {combineFilmsCsv} from './films-csv.js';
 const listeners=new Set();let active=null;let blobUrls=[];let currentCollection=null;let movieSearch=null;
 const progress=value=>listeners.forEach(listener=>listener(value));
 const json=createBatchedJson({report:progress});
@@ -67,16 +68,17 @@ async function freshProfile(id,signal){
 }
 async function userProfile(id){const saved=await read('profiles',id);if(!saved||saved.kind||!/^https:\/\/letterboxd\.com\/[\w-]+\/watchlist\/$/.test(saved.url))throw Error('Choose a Letterboxd user profile.');return saved;}
 async function fetchFilms(profile,signal,forStats=false){
- const base=profile.url.replace(/watchlist\/$/,'films/');const cache=forStats?await readUserData(profile.profileId):null,job=cache?.statsJob;
+ const base=profile.url.replace(/watchlist\/$/,'films/');const cache=await readUserData(profile.profileId),jobKey=forStats?'statsJob':'filmsJob',job=cache[jobKey];
  if(job?.phase==='metadata'&&job.snapshot)return job.snapshot;
+ if(forStats&&!job&&cache.films?.source==='csv'){await writeUserData({...cache,statsJob:{phase:'metadata',snapshot:cache.films}});return cache.films;}
  const refresh=job?.refresh||crypto.randomUUID(),movies=new Map((job?.movies||[]).map(movie=>[movie.id,movie])),seen=new Set(job?.seen||[]);let page=job?job.nextPage:1;
- async function checkpoint(value){if(forStats){const saved=await readUserData(profile.profileId);await writeUserData({...saved,statsJob:value});}}
+ async function checkpoint(value){const saved=await readUserData(profile.profileId);await writeUserData({...saved,[jobKey]:value});}
  await checkpoint({phase:'listing',refresh,movies:[...movies.values()],seen:[...seen],nextPage:page});
  while(page){signal.throwIfAborted();if(seen.has(page)||seen.size>=1000)throw Error('Unexpected films pagination.');const data=await json('/api/films?url='+encodeURIComponent(base)+'&page='+page+'&refresh='+refresh,signal);seen.add(page);data.movies.forEach(movie=>movies.set(movie.id,movie));page=data.nextPage;
   await checkpoint({phase:'listing',refresh,movies:[...movies.values()],seen:[...seen],nextPage:page});progress(forStats?{stage:'stats-films',done:seen.size,total:data.pages}:{page:seen.size,pages:data.pages,count:movies.size});
  }
  const snapshot={profileId:profile.profileId,view:'films',url:base,username:profile.username,movies:[...movies.values()],importedAt:new Date().toISOString()};
- await checkpoint({phase:'metadata',snapshot});return snapshot;
+ if(forStats)await checkpoint({phase:'metadata',snapshot});else{const saved=await readUserData(profile.profileId);delete saved.filmsJob;await writeUserData({...saved,films:snapshot});}return snapshot;
 }
 function parseCsv(text){
  const rows=[];let row=[],field='',quoted=false;text=text.replace(/^\uFEFF/,'');
@@ -90,9 +92,17 @@ async function importCsv(){
  if(!file)return null;if(file.size>20*1024*1024)throw Error('Choose a CSV smaller than 20 MB.');
  return operation(async signal=>prepare({profileId:'csv:'+file.name,username:file.name.replace(/\.csv$/i,''),url:'',movies:parseCsv(await file.text()),importedAt:new Date().toISOString()},signal));
 }
-const wrap=fn=>async(...args)=>{try{return{ok:true,value:await fn(...args)};}catch(error){return{ok:false,error:error.name==='AbortError'?'Loading cancelled.':error.message};}};
+const wrap=fn=>async(...args)=>{try{return{ok:true,value:await fn(...args)};}catch(error){return{ok:false,error:error.name==='AbortError'?'Loading cancelled.':error.message,retryable:!!error.retryable,cancelled:error.name==='AbortError'};}};
 window.desktop={
- openUserFilms:wrap((id,refresh=false)=>operation(async signal=>{const profile=await userProfile(id),cache=await readUserData(id);return prepare(!refresh&&cache.films?cache.films:await fetchFilms(profile,signal),signal);})),
+ importFilmsCsv:wrap(async id=>{
+  await userProfile(id);const files=await new Promise(resolve=>{const input=document.createElement('input');input.type='file';input.accept='.csv';input.multiple=true;input.hidden=true;document.body.append(input);input.onchange=()=>{const files=[...input.files];input.remove();resolve(files);};input.oncancel=()=>{input.remove();resolve([]);};input.click();});if(!files.length)return null;
+  if(files.some(file=>file.size>20*1024*1024)||files.reduce((sum,file)=>sum+file.size,0)>40*1024*1024)throw Error('Choose CSV files smaller than 20 MB each.');
+  return operation(async signal=>{const profile=await userProfile(id),values=await Promise.all(files.map(async file=>({name:file.name,text:await file.text()})));signal.throwIfAborted();
+   const cache=await readUserData(id),movies=combineFilmsCsv(values,cache.films?.movies),snapshot={profileId:id,view:'films',source:'csv',username:profile.username,url:profile.url.replace(/watchlist\/$/,'films/'),movies,importedAt:new Date().toISOString()};
+   delete cache.statsJob;delete cache.filmsJob;delete cache.stats;await writeUserData({...cache,films:snapshot});return prepare(snapshot,signal);
+  });
+ }),
+ openUserFilms:wrap((id,refresh=false)=>operation(async signal=>{const profile=await userProfile(id),cache=await readUserData(id);const value=!refresh&&cache.films?cache.films:await fetchFilms(profile,signal);if(refresh){const saved=await readUserData(id);delete saved.statsJob;await writeUserData(saved);}return prepare(value,signal);})),
  userStats:wrap(async id=>{await userProfile(id);const cache=await readUserData(id);return cache.stats?.version===statsVersion?cache.stats:null;}),
  statsProgress:wrap(async id=>{await userProfile(id);const cache=await readUserData(id);if(!cache.statsJob)return null;const job=cache.statsJob;if(job.phase==='listing')return{pending:true,phase:'listing',pages:job.seen.length};const saved=new Set((await read('artwork')).filter(value=>value.details?.detailsVersion===1).map(value=>value.id));return{pending:true,phase:'metadata',done:job.snapshot.movies.filter(movie=>saved.has(movie.id)).length,total:job.snapshot.movies.length};}),
  generateUserStats:wrap(id=>operation(async signal=>{
