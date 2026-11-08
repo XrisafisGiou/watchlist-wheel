@@ -1,13 +1,14 @@
 import {searchMappedMovies} from './movie-search.js';
 import {readUserData,writeUserData,deleteUserData} from './user-data.js';
 import {buildStats,statsVersion} from './stats.js';
+import {createBatchedJson,abortableDelay} from './requests.js';
 const listeners=new Set();let active=null;let blobUrls=[];let currentCollection=null;let movieSearch=null;
 const progress=value=>listeners.forEach(listener=>listener(value));
+const json=createBatchedJson({report:progress});
 const database=new Promise((resolve,reject)=>{const request=indexedDB.open('watchlist-wheel',1);request.onupgradeneeded=()=>{request.result.createObjectStore('profiles',{keyPath:'profileId'});request.result.createObjectStore('artwork',{keyPath:'id'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(Error('Could not open browser storage.'));});
 async function read(store,key){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction(store);const request=key===undefined?transaction.objectStore(store).getAll():transaction.objectStore(store).get(key);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
 async function write(store,value){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction(store,'readwrite');transaction.objectStore(store).put(value);transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);});}
 async function removeProfile(id){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction('profiles','readwrite');transaction.objectStore('profiles').delete(id);transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);});}
-async function json(url,signal){const response=await fetch(url,{signal,cache:/^\/api\/(watchlist|list|films)\?/.test(url)?'no-store':'default'});const data=await response.json();if(!response.ok)throw Error(data.error||'Could not load Letterboxd.');return data;}
 async function save(value){if(value.profileIds)return value;value.profileId||=value.url||'csv:'+value.importedAt;const stored=structuredClone(value);stored.movies=stored.movies.filter(movie=>!movie.sessionOnly);stored.movies.forEach(movie=>{movie.poster=movie.posterKey||'';});if(value.view==='films'){const cache=await readUserData(value.profileId);await writeUserData({...cache,films:stored});}else await write('profiles',stored);return value;}
 async function prepare(value,signal){
  blobUrls.forEach(url=>URL.revokeObjectURL(url));blobUrls=[];
@@ -32,7 +33,7 @@ async function preparePosters(value,signal){
      const blob=await response.blob();signal.throwIfAborted();
      const objectUrl=URL.createObjectURL(blob);try{const image=new Image();image.src=objectUrl;await image.decode();}catch(error){URL.revokeObjectURL(objectUrl);throw error;}
      movie.poster=objectUrl;blobUrls.push(movie.poster);movie.posterKey=src;loaded=true;await write('artwork',{...saved,id:movie.id,src,...(movie.runtime!==undefined?{runtime:movie.runtime}:{}),...(movie.genres!==undefined?{genres:movie.genres}:{})});
-    }catch(error){signal.throwIfAborted();if(src&&cache)await cache.delete(src);if(attempt<2)await new Promise(resolve=>setTimeout(resolve,700*(attempt+1)));}
+    }catch(error){signal.throwIfAborted();if(error.retryable)throw error;if(src&&cache)await cache.delete(src);if(attempt<2)await abortableDelay(700*(attempt+1),signal);}
    }
    if(!loaded){movie.poster='';missing++;}progress({stage:'posters',done:++done,total:value.movies.length});
   }
@@ -91,11 +92,11 @@ window.desktop={
   progress({stage:'stats-metadata',done,total:snapshot.movies.length});
   await Promise.all(Array.from({length:Math.min(6,snapshot.movies.length)},async()=>{while(next<snapshot.movies.length){signal.throwIfAborted();const movie=snapshot.movies[next++];try{
    let details=stored.get(movie.id)?.details;
-   if(details?.detailsVersion!==1){for(let attempt=0;attempt<3;attempt++){try{details=await json('/api/film-details?url='+encodeURIComponent(movie.url),signal);if(details.detailsVersion!==1)throw Error('Incomplete film details.');break;}catch(error){signal.throwIfAborted();if(attempt===2)throw error;await new Promise(resolve=>setTimeout(resolve,600*(attempt+1)));}}
+   if(details?.detailsVersion!==1){for(let attempt=0;attempt<3;attempt++){try{details=await json('/api/film-details?url='+encodeURIComponent(movie.url),signal);if(details.detailsVersion!==1)throw Error('Incomplete film details.');break;}catch(error){signal.throwIfAborted();if(error.retryable||attempt===2)throw error;await abortableDelay(600*(attempt+1),signal);}}
     await write('artwork',{...stored.get(movie.id),id:movie.id,details,runtime:details.runtime,genres:details.genres});
    }
    const {url:poster,...metadata}=details;Object.assign(movie,metadata);if(poster)movie.posterKey='/api/image?url='+encodeURIComponent(poster);
-  }catch(error){signal.throwIfAborted();failed++;}progress({stage:'stats-metadata',done:++done,total:snapshot.movies.length});}}));
+  }catch(error){signal.throwIfAborted();if(error.retryable)throw error;failed++;}progress({stage:'stats-metadata',done:++done,total:snapshot.movies.length});}}));
   signal.throwIfAborted();if(failed)throw Error(`Could not load ${failed} films. Generate again to retry; completed movie details are cached.`);
   const stats={...buildStats(snapshot.movies),generatedAt:new Date().toISOString()};const cache=await readUserData(id);await writeUserData({...cache,films:snapshot,stats});progress({stage:'stats-complete',done:1,total:1});return stats;
  })),
@@ -130,12 +131,12 @@ window.desktop={
   const movies=currentCollection.movies;const stored=new Map((await read('artwork')).map(value=>[value.id,value]));
   await Promise.all(Array.from({length:Math.min(8,movies.length)},async()=>{while(next<movies.length){signal.throwIfAborted();const movie=movies[next++];try{
    const saved=stored.get(movie.id);if(movie.runtime===undefined&&saved?.runtime!==undefined)movie.runtime=saved.runtime;if(movie.genres===undefined&&saved?.genres!==undefined)movie.genres=saved.genres;
-   if((needRuntime&&movie.runtime===undefined)||(needGenres&&movie.genres===undefined)){let metadata;for(let attempt=0;attempt<2;attempt++){try{metadata=await json('/api/metadata?url='+encodeURIComponent(movie.url),signal);break;}catch(error){signal.throwIfAborted();if(attempt)throw error;await new Promise(resolve=>setTimeout(resolve,500));}}
+   if((needRuntime&&movie.runtime===undefined)||(needGenres&&movie.genres===undefined)){let metadata;for(let attempt=0;attempt<2;attempt++){try{metadata=await json('/api/metadata?url='+encodeURIComponent(movie.url),signal);break;}catch(error){signal.throwIfAborted();if(error.retryable||attempt)throw error;await abortableDelay(500,signal);}}
     movie.runtime=Number.isFinite(metadata.runtime)&&metadata.runtime>0?metadata.runtime:null;movie.genres=Array.isArray(metadata.genres)?metadata.genres:[];
     const src=metadata.url?'/api/image?url='+encodeURIComponent(metadata.url):saved?.src;movie.posterKey||=src;
     await write('artwork',{...saved,id:movie.id,src:movie.posterKey||src,runtime:movie.runtime,genres:movie.genres});
    }
-  }catch(error){signal.throwIfAborted();failed++;}progress({stage:'metadata',done:++done,total:movies.length});}}));
+  }catch(error){signal.throwIfAborted();if(error.retryable)throw error;failed++;}progress({stage:'metadata',done:++done,total:movies.length});}}));
   await save(currentCollection);if(failed)throw Error(`Could not load data for ${failed} movies. Apply again to retry.`);return movies.map(({id,runtime,genres})=>({id,runtime,genres}));
  })),
  loadPosters:wrap(ids=>operation(async signal=>{if(!currentCollection)throw Error('Open a profile first.');const movies=currentCollection.movies.filter(movie=>ids.includes(movie.id));const value=await preparePosters({movies},signal);await save(currentCollection);return value;})),

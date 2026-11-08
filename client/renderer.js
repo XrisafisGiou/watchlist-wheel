@@ -1,5 +1,6 @@
 import { randomIndex, randomSample, landingRotation, poolFor, decadeFor, eliminationTiming } from './wheel.js';
 import {renderStats} from './stats-view.js';
+import {createStarRange} from './rating-range.js';
 const $ = id => document.getElementById(id);
 const desktop = window.desktop;
 let collection = null;
@@ -7,15 +8,17 @@ let profileOwner = null;
 let activeTab = 'watchlist';
 let tabLoading = false;
 let statsGenerating = false;
-let ratingFilter = 'any';
+let draftRating = null;
+let appliedRating = null;
+const starRange = createStarRange($('rating-stars'),value=>{draftRating=value?{kind:'range',...value}:null;syncRating();syncApplyVisibility();});
 function stars(value) { return '★'.repeat(Math.floor(value)) + (value % 1 ? '½' : ''); }
-function matchesRating(movie) { return collection.view !== 'films' || ratingFilter === 'any' || (ratingFilter === 'none' ? movie.rating === null || movie.rating === undefined : Number.isFinite(movie.rating) && movie.rating >= Number($('rating-min').value) && movie.rating <= Number($('rating-max').value)); }
+function matchesRating(movie) { return collection.view !== 'films' || !appliedRating || (appliedRating.kind === 'none' ? movie.rating === null || movie.rating === undefined : Number.isFinite(movie.rating) && movie.rating >= appliedRating.min && movie.rating <= appliedRating.max); }
 function syncRating() {
-  $('rating-any').setAttribute('aria-pressed', String(ratingFilter === 'any'));
-  $('rating-none').setAttribute('aria-pressed', String(ratingFilter === 'none'));
-  $('rating-min-value').textContent = stars(Number($('rating-min').value));
-  $('rating-max-value').textContent = stars(Number($('rating-max').value));
-  $('rating-section').querySelector('summary').textContent = ratingFilter === 'none' ? 'Rating · No rating' : ratingFilter === 'range' ? `Rating · ${stars(Number($('rating-min').value))} – ${stars(Number($('rating-max').value))}` : 'Rating';
+  $('rating-none').setAttribute('aria-pressed', String(draftRating?.kind === 'none'));
+  $('rating-clear').hidden = !draftRating;
+  starRange.set(draftRating?.kind === 'range'?draftRating:null);
+  $('rating-range-label').textContent = draftRating?.kind === 'range' ? `${stars(draftRating.min)} – ${stars(draftRating.max)}` : draftRating ? 'No rating' : 'Drag to select a range';
+  $('rating-section').querySelector('summary').textContent = 'Rating';
 }
 function syncProfileView() {
   $('profile-tabs').hidden = !profileOwner;
@@ -96,16 +99,17 @@ const draftDecades = new Set();
 let appliedDecades = new Set();
 const draftExcludedDecades = new Set();
 let appliedExcludedDecades = new Set();
-function hasDraftFilters() { return $('enable-duration').checked || draftGenres.size || draftExcludedGenres.size || draftDecades.size || draftExcludedDecades.size; }
-function hasAppliedFilters() { return maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size || appliedDecades.size || appliedExcludedDecades.size; }
+function hasDraftFilters() { return draftRating || $('enable-duration').checked || draftGenres.size || draftExcludedGenres.size || draftDecades.size || draftExcludedDecades.size; }
+function hasAppliedFilters() { return appliedRating || maxRuntime !== null || appliedGenres.size || appliedExcludedGenres.size || appliedDecades.size || appliedExcludedDecades.size; }
 function syncApplyVisibility() {
-  $('apply-runtime').hidden = !hasDraftFilters() && !filteringRuntime;
+  $('apply-runtime').hidden = !hasDraftFilters() && !hasAppliedFilters() && !filteringRuntime;
 }
 function syncDraftFilters() {
   if (!hasDraftFilters() && hasAppliedFilters()) clearFilters(); else syncApplyVisibility();
 }
 function clearFilters() {
   if (busy || gridLoading) return;
+  draftRating = appliedRating = null; syncRating();
   maxRuntime = null; appliedGenres.clear(); draftGenres.clear(); appliedExcludedGenres.clear(); draftExcludedGenres.clear(); renderGenres();
   draftDecades.clear(); appliedDecades.clear(); draftExcludedDecades.clear(); appliedExcludedDecades.clear(); renderDecades();
   $('enable-duration').checked = false; $('duration-slider').hidden = true;
@@ -246,7 +250,7 @@ function visibleMovies() {
 }
 function showFilterStatus() {
   $('runtime-status').hidden = !hasAppliedFilters();
-  $('runtime-status').textContent = [maxRuntime !== null ? `Up to ${maxRuntime} min` : '', [...appliedGenres].join(', '), appliedExcludedGenres.size ? 'Exclude ' + [...appliedExcludedGenres].join(', ') : '', [...appliedDecades].sort((a,b)=>b-a).map(decade=>`${decade}s`).join(', '), appliedExcludedDecades.size ? 'Exclude ' + [...appliedExcludedDecades].sort((a,b)=>b-a).map(decade=>`${decade}s`).join(', ') : ''].filter(Boolean).join(' · ');
+  $('runtime-status').textContent = [appliedRating?.kind === 'range' ? `${stars(appliedRating.min)} – ${stars(appliedRating.max)}` : appliedRating ? 'No rating' : '', maxRuntime !== null ? `Up to ${maxRuntime} min` : '', [...appliedGenres].join(', '), appliedExcludedGenres.size ? 'Exclude ' + [...appliedExcludedGenres].join(', ') : '', [...appliedDecades].sort((a,b)=>b-a).map(decade=>`${decade}s`).join(', '), appliedExcludedDecades.size ? 'Exclude ' + [...appliedExcludedDecades].sort((a,b)=>b-a).map(decade=>`${decade}s`).join(', ') : ''].filter(Boolean).join(' · ');
 }
 async function sortCollection() {
   if (busy || gridLoading) { $('sort').value = lastSort; return; }
@@ -369,8 +373,9 @@ function updateSelection() {
   $('clear-selection').hidden = !selected.size;
   wheelPool = poolFor(eligibleMovies(), selected);
   $('pool-count').textContent = `${wheelPool.length} ${wheelPool.length === 1 ? 'movie' : 'movies'}`;
-  $('pool-type').textContent = selected.size ? 'Selected' : hasAppliedFilters() || ratingFilter !== 'any' ? 'Filtered movies' : 'All movies';
-  for (const id of ['rating-any','rating-none','rating-range']) $(id).disabled = busy;
+  $('pool-type').textContent = selected.size ? 'Selected' : hasAppliedFilters() ? 'Filtered movies' : 'All movies';
+  for (const id of ['rating-none','rating-clear']) $(id).disabled = busy || gridLoading;
+  starRange.disable(busy || gridLoading);
   $('enable-duration').disabled = busy || gridLoading;
   $('apply-runtime').disabled = (busy && !filteringRuntime) || gridLoading;
   $('clear-runtime').disabled = busy || gridLoading;
@@ -427,7 +432,7 @@ async function openCollection(value) {
   collection = value; selected = new Set(); pageNumber = 1; maxRuntime = null;
   profileOwner = !value.kind && !value.profileIds && (value.view === 'films' || /^https:\/\/letterboxd\.com\/[\w-]+\/watchlist\/$/.test(value.url)) ? {profileId:value.profileId,username:value.username} : null;
   activeTab = value.view === 'films' ? 'films' : 'watchlist';
-  ratingFilter = 'any'; $('rating-min').value = '.5'; $('rating-max').value = '5'; $('rating-section').open = false; $('rating-section').hidden = activeTab !== 'films'; syncRating();
+  draftRating = appliedRating = null; $('rating-section').open = false; $('rating-section').hidden = activeTab !== 'films'; syncRating();
   for (const option of [...$('sort').querySelectorAll('option[data-rating]')]) option.remove();
   if (activeTab === 'films') for (const [value,text] of [['rating-desc','Highest rated first'],['rating-asc','Lowest rated first']]) { const option = document.createElement('option'); option.value = value; option.textContent = text; option.dataset.rating = ''; $('sort').append(option); }
   $('sort').querySelector('option[value=original]').textContent = activeTab === 'films' ? 'Films order' : 'Watchlist order';
@@ -478,7 +483,8 @@ function setBusy(value) {
   $('first-page').disabled = $('previous-page').disabled = value || gridLoading || pageNumber <= 1;
   $('last-page').disabled = $('next-page').disabled = value || gridLoading || pageNumber >= Math.ceil(visibleMovies().length / pageSize);
   $('max-runtime').disabled = value;
-  for (const id of ['tab-watchlist','tab-films','tab-stats','generate-stats','rating-any','rating-none','rating-range','refresh','add-movies','change']) $(id).disabled = value;
+  for (const id of ['tab-watchlist','tab-films','tab-stats','generate-stats','rating-none','rating-clear','refresh','add-movies','change']) $(id).disabled = value;
+  starRange.disable(value || gridLoading);
   $('remove-winner').disabled = value;
   $('enable-duration').disabled = value;
   $('genre-filter').disabled = value;
@@ -494,13 +500,14 @@ async function applyRuntime() {
   const excludedGenres = new Set(draftExcludedGenres);
   const chosenDecades = new Set(draftDecades);
   const excludedDecades = new Set(draftExcludedDecades);
+  const chosenRating = draftRating ? {...draftRating} : null;
   filteringRuntime = true; setBusy(true); $('apply-runtime').textContent = 'Cancel';
   $('runtime-status').hidden = false; $('runtime-status').textContent = 'Loading movie data…';
   try {
     const metadata = limit !== null || chosenGenres.size || excludedGenres.size ? await invoke('loadMetadata', chosenGenres.size > 0 || excludedGenres.size > 0, limit !== null) : [];
     const byId = new Map(metadata.map(movie => [movie.id, movie]));
     collection.movies.forEach(movie => Object.assign(movie, byId.get(movie.id)));
-    maxRuntime = limit; appliedGenres = chosenGenres; appliedExcludedGenres = excludedGenres; appliedDecades = chosenDecades; appliedExcludedDecades = excludedDecades; pageNumber = 1;
+    maxRuntime = limit; appliedGenres = chosenGenres; appliedExcludedGenres = excludedGenres; appliedDecades = chosenDecades; appliedExcludedDecades = excludedDecades; appliedRating = chosenRating; pageNumber = 1;
     const allowed = new Set(eligibleMovies().map(movie => movie.id));
     selected = new Set([...selected].filter(id => allowed.has(id)));
     resetRounds(); $('clear-runtime').hidden = !hasAppliedFilters();
@@ -705,18 +712,8 @@ $('sound').addEventListener('click', () => { sound = !sound; setSound(); initAud
 for (const tab of ['watchlist','films','stats']) $('tab-'+tab).addEventListener('click', () => switchProfileTab(tab));
 $('generate-stats').addEventListener('click', generateProfileStats);
 $('cancel-stats').addEventListener('click', () => { if (statsGenerating) invoke('cancelImport').catch(error => toast(error.message)); });
-function applyRatingFilter(value) {
-  if (busy || collection?.view !== 'films') return;
-  ratingFilter = value; syncRating();
-  const allowed = new Set(eligibleMovies().map(movie => movie.id)); selected = new Set([...selected].filter(id => allowed.has(id)));
-  pageNumber = 1; resetRounds(); renderGrid();
-}
-$('rating-any').addEventListener('click', () => applyRatingFilter('any'));
-$('rating-none').addEventListener('click', () => applyRatingFilter('none'));
-for (const id of ['rating-min','rating-max']) $(id).addEventListener('input', () => {
-  if (Number($('rating-min').value) > Number($('rating-max').value)) $(id === 'rating-min' ? 'rating-max' : 'rating-min').value = $(id).value;
-  applyRatingFilter('range');
-});
+$('rating-none').addEventListener('click', () => { if (busy || gridLoading) return; draftRating = draftRating?.kind === 'none' ? null : {kind:'none'}; syncRating(); syncApplyVisibility(); });
+$('rating-clear').addEventListener('click', () => { if (busy || gridLoading) return; draftRating = null; syncRating(); syncApplyVisibility(); });
 $('home').addEventListener('click', event => { event.preventDefault(); goHome(); });
 $('change').addEventListener('click', goHome);
 $('minimize-spin').addEventListener('click', closeSpinFocus);
@@ -776,6 +773,15 @@ $('refresh').addEventListener('click', () => { if (busy || gridLoading) return; 
 $('retry-posters').addEventListener('click', () => renderGrid());
 $('cancel-import').addEventListener('click', () => invoke('cancelImport').catch(error => toast(error.message)));
 desktop?.onProgress(value => {
+  if (value.stage === 'cooldown' || value.stage === 'batch-wait') {
+    const message = value.stage === 'cooldown' ? `Letterboxd is busy · retrying in ${value.seconds}s…` : 'Loading next batch…';
+    if (statsGenerating) $('stats-progress-label').textContent = message;
+    else if (tabLoading) $('tab-progress').textContent = message;
+    else if (filteringRuntime) $('runtime-status').textContent = message;
+    else if (gridLoading) $('grid-progress-text').textContent = message;
+    else $('progress-text').textContent = message;
+    return;
+  }
   if (value.stage?.startsWith('stats-')) {
     const percentage = value.stage === 'stats-complete' ? 100 : value.stage === 'stats-films' ? Math.round(20*value.done/Math.max(1,value.total)) : 20+Math.round(79*value.done/Math.max(1,value.total));
     $('stats-progress-bar').value = percentage; $('stats-progress-value').textContent = percentage+'%';
@@ -783,6 +789,7 @@ desktop?.onProgress(value => {
   }
   if (tabLoading && value.page) { $('tab-progress').textContent = `Loading films · page ${value.page}/${value.pages}`; return; }
   if (value.stage === 'metadata') { $('runtime-status').textContent = `Loading movie data ${value.done}/${value.total}`; return; }
+  if (value.stage === 'posters' && gridLoading) $('grid-progress-text').textContent = `Loading posters · ${value.done}/${value.total}`;
   $('progress-text').textContent = value.stage === 'posters' ? 'Loading posters ' + value.done + '/' + value.total : 'Loading page ' + value.page + '/' + value.pages;
 });
 $('search').addEventListener('input', () => { pageNumber = 1; renderGrid(); }); $('sort').addEventListener('change', () => sortCollection().catch(error => toast(error.message)));

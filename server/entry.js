@@ -6,7 +6,7 @@ async function remote(url,image=false,fresh=false,timeout=20000){
  for(let redirect=0;redirect<4;redirect++){
   const response=await fetch(url,{redirect:'manual',cache:fresh?'no-store':'default',signal:AbortSignal.timeout(timeout),headers:{Accept:image?'image/*':'text/html','User-Agent':'Mozilla/5.0 (compatible; WatchlistWheel/1.1; public watchlist reader)',...(fresh?{'Cache-Control':'no-cache','Pragma':'no-cache'}:{})}});
   if(response.status>=300&&response.status<400){const next=new URL(response.headers.get('location'),url);if(image?!['https://a.ltrbxd.com','https://s.ltrbxd.com'].includes(next.origin):next.origin!=='https://letterboxd.com')throw Error('Unexpected redirect.');url=next.href;continue;}
-  if(!response.ok)throw Error([403,429].includes(response.status)?'Letterboxd is limiting requests. Try again later or import CSV.':response.status===404?'Watchlist, list or movie not found.':`Letterboxd returned ${response.status}.`);
+  if(!response.ok){const error=Error([403,429].includes(response.status)?'Letterboxd is limiting requests. Please retry after the cooldown.':response.status===404?'Watchlist, list or movie not found.':`Letterboxd returned ${response.status}.`);if([403,429,503].includes(response.status)){error.retryable=true;const header=response.headers.get('retry-after');const seconds=Number(header);error.retryAfter=Math.max(3,Math.min(120,Number.isFinite(seconds)&&seconds>0?seconds:header?Math.ceil((Date.parse(header)-Date.now())/1000)||3:3));}throw error;}
   return response;
  }
  throw Error('Too many redirects.');
@@ -50,7 +50,7 @@ async function api(request,ctx){
 export default{async fetch(request,env,ctx){
  const url=new URL(request.url);
  if(request.method!=='GET')return json({error:'Method not allowed.'},405);
- if(url.pathname.startsWith('/api/'))try{return await api(request,ctx);}catch(error){return json({error:error.message||'Could not load Letterboxd.'},502);}
+ if(url.pathname.startsWith('/api/'))try{return await api(request,ctx);}catch(error){const response=json({error:error.message||'Could not load Letterboxd.',...(error.retryable?{retryable:true,retryAfter:error.retryAfter}:{})},error.retryable?429:502);if(error.retryable)response.headers.set('retry-after',String(error.retryAfter));return response;}
  const asset=assets[url.pathname==='/'?'/index.html':url.pathname];if(!asset)return new Response('Not found',{status:404});
  return new Response(asset.body,{headers:{'content-type':asset.type,'cache-control':'no-cache','x-content-type-options':'nosniff','referrer-policy':'no-referrer'}});
 }};
