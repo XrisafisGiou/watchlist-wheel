@@ -8,6 +8,7 @@ let profileOwner = null;
 let activeTab = 'watchlist';
 let tabLoading = false;
 let statsGenerating = false;
+let statsPending = null;
 let draftRating = null;
 let appliedRating = null;
 const starRange = createStarRange($('rating-stars'),value=>{draftRating=value?{kind:'range',...value}:null;syncRating();syncApplyVisibility();});
@@ -29,16 +30,17 @@ function syncProfileView() {
   $('refresh').hidden = activeTab === 'stats' || !collection?.url;
 }
 function showCachedStats(value) {
-  $('stats-content').replaceChildren(); $('stats-intro').hidden = !!value;
+  $('stats-content').replaceChildren(); $('stats-intro').hidden = !!value && !statsPending;
+  $('stats-intro').textContent = statsPending ? statsPending.phase === 'metadata' ? `${statsPending.done}/${statsPending.total} film details saved · Resume to continue.` : `${statsPending.pages} film pages saved · Resume to continue.` : 'Generate stats from watched films.';
   $('stats-date').textContent = value ? 'Generated '+new Date(value.generatedAt).toLocaleString() : '';
-  $('generate-stats').textContent = value ? 'Regenerate' : 'Generate stats';
+  $('generate-stats').textContent = statsPending ? 'Resume' : value ? 'Regenerate' : 'Generate stats';
   if (value) renderStats($('stats-content'), value);
 }
 async function switchProfileTab(tab,refresh=false) {
   if (!profileOwner || busy || importing || gridLoading || tabLoading || (activeTab === tab && !refresh)) return;
   tabLoading = true; setBusy(true); $('poster-warning').hidden = true;
   try {
-    if (tab === 'stats') { const value = await invoke('userStats',profileOwner.profileId); activeTab = tab; $('stats-error').hidden = true; showCachedStats(value); }
+    if (tab === 'stats') { const value = await invoke('userStats',profileOwner.profileId); statsPending = await invoke('statsProgress',profileOwner.profileId); activeTab = tab; $('stats-error').hidden = true; showCachedStats(value); }
     else {
       $('movie-workspace').hidden = true; $('tab-progress').hidden = false; $('tab-progress').textContent = 'Loading…';
       const value = await invoke(tab === 'films' ? 'openUserFilms' : 'openProfile',profileOwner.profileId,refresh);
@@ -51,8 +53,13 @@ async function generateProfileStats() {
   if (!profileOwner || busy || tabLoading || gridLoading) return;
   statsGenerating = true; setBusy(true); $('stats-progress').hidden = false; $('stats-error').hidden = true;
   $('stats-progress-bar').value = 0; $('stats-progress-value').textContent = '0%'; $('stats-progress-label').textContent = 'Loading films…';
-  try { showCachedStats(await invoke('generateUserStats',profileOwner.profileId)); }
-  catch (error) { $('stats-error').textContent = error.message; $('stats-error').hidden = false; }
+  try { const value = await invoke('generateUserStats',profileOwner.profileId); statsPending = null; showCachedStats(value); }
+  catch (error) {
+    statsPending = await invoke('statsProgress',profileOwner.profileId).catch(()=>null);
+    $('generate-stats').textContent = statsPending ? 'Resume' : 'Generate stats';
+    $('stats-error').textContent = error.message + (statsPending ? ' Progress saved. Resume to continue.' : ''); $('stats-error').hidden = false;
+    if (statsPending) { $('stats-intro').hidden = false; $('stats-intro').textContent = statsPending.phase === 'metadata' ? `${statsPending.done}/${statsPending.total} film details saved.` : `${statsPending.pages} film pages saved.`; }
+  }
   finally { statsGenerating = false; $('stats-progress').hidden = true; setBusy(false); updateSelection(); }
 }
 let profiles = [];

@@ -24,15 +24,15 @@ async function preparePosters(value,signal){
    signal.throwIfAborted();const movie=value.movies[next++];let loaded=movie.poster?.startsWith('blob:');
    let src='';for(let attempt=0;attempt<3&&!loaded;attempt++){
     try{
-     const saved=await read('artwork',movie.id);src=movie.posterKey||saved?.src||(!movie.poster?.startsWith('blob:')?movie.poster:'');
+     const saved=await read('artwork',movie.id);let details=saved?.details;src=movie.posterKey||saved?.src||(details?.url?'/api/image?url='+encodeURIComponent(details.url):'')||(!movie.poster?.startsWith('blob:')?movie.poster:'');
      if(movie.runtime===undefined&&saved?.runtime!==undefined)movie.runtime=saved.runtime;
      if(movie.genres===undefined&&saved?.genres!==undefined)movie.genres=saved.genres;
-     if(!src||movie.runtime===undefined){try{const metadata=await json((src?'/api/metadata?url=':'/api/poster?url=')+encodeURIComponent(movie.url),signal);if(!src)src='/api/image?url='+encodeURIComponent(metadata.url);if(metadata.runtime!==undefined)movie.runtime=metadata.runtime;if(Array.isArray(metadata.genres))movie.genres=metadata.genres;}catch(error){signal.throwIfAborted();if(!src)throw error;}}
+     if(!src||movie.runtime===undefined){try{const metadata=await json((src?'/api/metadata?url=':'/api/poster?url=')+encodeURIComponent(movie.url),signal);if(!src)src='/api/image?url='+encodeURIComponent(metadata.url);if(metadata.runtime!==undefined)movie.runtime=metadata.runtime;if(Array.isArray(metadata.genres))movie.genres=metadata.genres;if(metadata.detailsVersion===1)details=metadata;}catch(error){signal.throwIfAborted();if(!src)throw error;}}
      let response=await cache?.match(src);
      if(!response){response=await fetch(src,{signal});if(!response.ok)throw Error('Could not load poster.');if(!response.headers.get('content-type')?.startsWith('image/'))throw Error('Invalid poster.');if(cache)try{await cache.put(src,response.clone());}catch{/* Storage quota: this image remains available for the current session. */}}
      const blob=await response.blob();signal.throwIfAborted();
      const objectUrl=URL.createObjectURL(blob);try{const image=new Image();image.src=objectUrl;await image.decode();}catch(error){URL.revokeObjectURL(objectUrl);throw error;}
-     movie.poster=objectUrl;blobUrls.push(movie.poster);movie.posterKey=src;loaded=true;await write('artwork',{...saved,id:movie.id,src,...(movie.runtime!==undefined?{runtime:movie.runtime}:{}),...(movie.genres!==undefined?{genres:movie.genres}:{})});
+     movie.poster=objectUrl;blobUrls.push(movie.poster);movie.posterKey=src;loaded=true;await write('artwork',{...saved,id:movie.id,src,...(details?{details}:{}),...(movie.runtime!==undefined?{runtime:movie.runtime}:{}),...(movie.genres!==undefined?{genres:movie.genres}:{})});
     }catch(error){signal.throwIfAborted();if(error.retryable)throw error;if(src&&cache)await cache.delete(src);if(attempt<2)await abortableDelay(700*(attempt+1),signal);}
    }
    if(!loaded){movie.poster='';missing++;}progress({stage:'posters',done:++done,total:value.movies.length});
@@ -67,9 +67,16 @@ async function freshProfile(id,signal){
 }
 async function userProfile(id){const saved=await read('profiles',id);if(!saved||saved.kind||!/^https:\/\/letterboxd\.com\/[\w-]+\/watchlist\/$/.test(saved.url))throw Error('Choose a Letterboxd user profile.');return saved;}
 async function fetchFilms(profile,signal,forStats=false){
- const base=profile.url.replace(/watchlist\/$/,'films/'),refresh=crypto.randomUUID();const movies=new Map(),seen=new Set();let page=1;
- while(page){signal.throwIfAborted();if(seen.has(page)||seen.size>=1000)throw Error('Unexpected films pagination.');seen.add(page);const data=await json('/api/films?url='+encodeURIComponent(base)+'&page='+page+'&refresh='+refresh,signal);data.movies.forEach(movie=>movies.set(movie.id,movie));progress(forStats?{stage:'stats-films',done:seen.size,total:data.pages}:{page:seen.size,pages:data.pages,count:movies.size});page=data.nextPage;}
- return{profileId:profile.profileId,view:'films',url:base,username:profile.username,movies:[...movies.values()],importedAt:new Date().toISOString()};
+ const base=profile.url.replace(/watchlist\/$/,'films/');const cache=forStats?await readUserData(profile.profileId):null,job=cache?.statsJob;
+ if(job?.phase==='metadata'&&job.snapshot)return job.snapshot;
+ const refresh=job?.refresh||crypto.randomUUID(),movies=new Map((job?.movies||[]).map(movie=>[movie.id,movie])),seen=new Set(job?.seen||[]);let page=job?job.nextPage:1;
+ async function checkpoint(value){if(forStats){const saved=await readUserData(profile.profileId);await writeUserData({...saved,statsJob:value});}}
+ await checkpoint({phase:'listing',refresh,movies:[...movies.values()],seen:[...seen],nextPage:page});
+ while(page){signal.throwIfAborted();if(seen.has(page)||seen.size>=1000)throw Error('Unexpected films pagination.');const data=await json('/api/films?url='+encodeURIComponent(base)+'&page='+page+'&refresh='+refresh,signal);seen.add(page);data.movies.forEach(movie=>movies.set(movie.id,movie));page=data.nextPage;
+  await checkpoint({phase:'listing',refresh,movies:[...movies.values()],seen:[...seen],nextPage:page});progress(forStats?{stage:'stats-films',done:seen.size,total:data.pages}:{page:seen.size,pages:data.pages,count:movies.size});
+ }
+ const snapshot={profileId:profile.profileId,view:'films',url:base,username:profile.username,movies:[...movies.values()],importedAt:new Date().toISOString()};
+ await checkpoint({phase:'metadata',snapshot});return snapshot;
 }
 function parseCsv(text){
  const rows=[];let row=[],field='',quoted=false;text=text.replace(/^\uFEFF/,'');
@@ -87,6 +94,7 @@ const wrap=fn=>async(...args)=>{try{return{ok:true,value:await fn(...args)};}cat
 window.desktop={
  openUserFilms:wrap((id,refresh=false)=>operation(async signal=>{const profile=await userProfile(id),cache=await readUserData(id);return prepare(!refresh&&cache.films?cache.films:await fetchFilms(profile,signal),signal);})),
  userStats:wrap(async id=>{await userProfile(id);const cache=await readUserData(id);return cache.stats?.version===statsVersion?cache.stats:null;}),
+ statsProgress:wrap(async id=>{await userProfile(id);const cache=await readUserData(id);if(!cache.statsJob)return null;const job=cache.statsJob;if(job.phase==='listing')return{pending:true,phase:'listing',pages:job.seen.length};const saved=new Set((await read('artwork')).filter(value=>value.details?.detailsVersion===1).map(value=>value.id));return{pending:true,phase:'metadata',done:job.snapshot.movies.filter(movie=>saved.has(movie.id)).length,total:job.snapshot.movies.length};}),
  generateUserStats:wrap(id=>operation(async signal=>{
   const profile=await userProfile(id),snapshot=await fetchFilms(profile,signal,true);const stored=new Map((await read('artwork')).map(value=>[value.id,value]));let next=0,done=0,failed=0;
   progress({stage:'stats-metadata',done,total:snapshot.movies.length});
@@ -98,7 +106,7 @@ window.desktop={
    const {url:poster,...metadata}=details;Object.assign(movie,metadata);if(poster)movie.posterKey='/api/image?url='+encodeURIComponent(poster);
   }catch(error){signal.throwIfAborted();if(error.retryable)throw error;failed++;}progress({stage:'stats-metadata',done:++done,total:snapshot.movies.length});}}));
   signal.throwIfAborted();if(failed)throw Error(`Could not load ${failed} films. Generate again to retry; completed movie details are cached.`);
-  const stats={...buildStats(snapshot.movies),generatedAt:new Date().toISOString()};const cache=await readUserData(id);await writeUserData({...cache,films:snapshot,stats});progress({stage:'stats-complete',done:1,total:1});return stats;
+  const stats={...buildStats(snapshot.movies),generatedAt:new Date().toISOString()};const cache=await readUserData(id);delete cache.statsJob;await writeUserData({...cache,films:snapshot,stats});progress({stage:'stats-complete',done:1,total:1});return stats;
  })),
  createManualProfile:wrap(name=>operation(async signal=>{name=String(name).trim().slice(0,80);if(!name)throw Error('Enter a profile name.');return prepare({profileId:'manual:'+crypto.randomUUID(),kind:'manual',username:name,url:'',movies:[],removeWinner:false,importedAt:new Date().toISOString()},signal);})),
  importList:wrap(input=>operation(async signal=>{const value=await fetchList(input,signal);return prepare(applyListPreferences(value,await read('profiles',value.profileId)),signal);})),
@@ -134,7 +142,7 @@ window.desktop={
    if((needRuntime&&movie.runtime===undefined)||(needGenres&&movie.genres===undefined)){let metadata;for(let attempt=0;attempt<2;attempt++){try{metadata=await json('/api/metadata?url='+encodeURIComponent(movie.url),signal);break;}catch(error){signal.throwIfAborted();if(error.retryable||attempt)throw error;await abortableDelay(500,signal);}}
     movie.runtime=Number.isFinite(metadata.runtime)&&metadata.runtime>0?metadata.runtime:null;movie.genres=Array.isArray(metadata.genres)?metadata.genres:[];
     const src=metadata.url?'/api/image?url='+encodeURIComponent(metadata.url):saved?.src;movie.posterKey||=src;
-    await write('artwork',{...saved,id:movie.id,src:movie.posterKey||src,runtime:movie.runtime,genres:movie.genres});
+    await write('artwork',{...saved,id:movie.id,src:movie.posterKey||src,runtime:movie.runtime,genres:movie.genres,...(metadata.detailsVersion===1?{details:metadata}:{})});
    }
   }catch(error){signal.throwIfAborted();if(error.retryable)throw error;failed++;}progress({stage:'metadata',done:++done,total:movies.length});}}));
   await save(currentCollection);if(failed)throw Error(`Could not load data for ${failed} movies. Apply again to retry.`);return movies.map(({id,runtime,genres})=>({id,runtime,genres}));

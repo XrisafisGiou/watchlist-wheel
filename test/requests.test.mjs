@@ -19,3 +19,13 @@ test('server forwards retryable upstream limits with cooldown, without recommend
  const original=globalThis.fetch;globalThis.fetch=async()=>new Response('',{status:429,headers:{'retry-after':'7'}});
  try{const response=await watchlist(new Request('https://app.example/api/watchlist?url='+encodeURIComponent('https://letterboxd.com/test/watchlist/')));assert.equal(response.status,429);assert.equal(response.headers.get('retry-after'),'7');const value=await response.json();assert.equal(value.retryable,true);assert.equal(value.retryAfter,7);assert.doesNotMatch(value.error,/CSV/);}finally{globalThis.fetch=original;}
 });
+test('a thousand queued films remain serial and recover without duplicate successful fetches',async()=>{
+ let active=0,peak=0,limited=false;const completed=new Set();
+ const request=createBatchedJson({spacingMs:0,pauseMs:0,retryBaseMs:1,storage:null,fetchFn:async url=>{active++;peak=Math.max(peak,active);await Promise.resolve();active--;if(url==='film-300'&&!limited){limited=true;return Response.json({error:'Busy'},{status:429});}assert.equal(completed.has(url),false);completed.add(url);return Response.json({url});}});
+ const result=await Promise.all(Array.from({length:1000},(_,i)=>request('film-'+i)));assert.equal(result.length,1000);assert.equal(completed.size,1000);assert.equal(peak,1);
+});
+test('persisted cooldowns survive a new queue and cancellation does not bypass them',async()=>{
+ const values=new Map(),storage={getItem:key=>values.get(key),setItem:(key,value)=>values.set(key,value)};let calls=0;
+ const first=createBatchedJson({spacingMs:0,pauseMs:0,retryBaseMs:1000,maxRetries:0,storage,fetchFn:async()=>{calls++;return Response.json({error:'Busy'},{status:429});}});await assert.rejects(first('a'),/Busy/);
+ const second=createBatchedJson({spacingMs:0,pauseMs:0,storage,fetchFn:async()=>{calls++;return Response.json({});}});const controller=new AbortController();const waiting=second('b',controller.signal);await abortableDelay(10);controller.abort();await assert.rejects(waiting,{name:'AbortError'});assert.equal(calls,1);
+});
