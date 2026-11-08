@@ -16,24 +16,31 @@ export function listUrl(input) {
  if(!['https://letterboxd.com','https://www.letterboxd.com'].includes(url.origin)||url.username||url.password||!/^\/[\w-]+\/list\/[\w-]+\/?$/.test(url.pathname))throw Error('Use a Letterboxd movie list URL.');
  return 'https://letterboxd.com'+url.pathname.toLowerCase().replace(/\/?$/,'/');
 }
-export function parsePage(html,search=false,list=false) {
+export function filmsUrl(input) {
+ const url=new URL(input);
+ if(!['https://letterboxd.com','https://www.letterboxd.com'].includes(url.origin)||url.username||url.password||!/^\/[\w-]+\/films\/?$/.test(url.pathname))throw Error('Use a Letterboxd user films URL.');
+ return 'https://letterboxd.com/'+url.pathname.split('/')[1].toLowerCase()+'/films/';
+}
+export function parsePage(html,search=false,list=false,films=false) {
  const root=parseDocument(html);const elements=getElementsByTagName('*',root,true);const movies=new Map();let pages=1,nextPage=null;
  for(const element of elements){
   const a=element.attribs||{};
   if((a['data-component-class']==='LazyPoster'&&a['data-item-link'])||a['data-film-slug']){
-   if(list){let parent=element.parent;while(parent&&!/(^|\s)poster-list(\s|$)/.test(parent.attribs?.class||''))parent=parent.parent;if(!parent)continue;}
+   if(list||films){let parent=element.parent;while(parent&&!/(^|\s)(poster-list|grid)(\s|$)/.test(parent.attribs?.class||''))parent=parent.parent;if(!parent)continue;}
    let url;try{url=filmUrl(a['data-item-link']||'/film/'+a['data-film-slug']+'/');}catch{continue;}
    const image=getElementsByTagName('img',element,true)[0];const full=a['data-item-name']||a['data-film-name']||image?.attribs.alt||'';
    const year=full.match(/\((\d{4})\)$/)?.[1]||a['data-film-release-year']||'';
-   movies.set(url,{id:url,url,title:full.replace(/\s*\(\d{4}\)$/,''),year,poster:''});
+   let rating=null,liked=false;
+   if(films){const nodes=getElementsByTagName('*',element.parent,true);for(const node of nodes){const match=node.attribs?.class?.match(/(?:^|\s)rated-(\d+)(?:\s|$)/);if(match&&Number(match[1])>=1&&Number(match[1])<=10)rating=Number(match[1])/2;if(/(?:^|\s)like(?:d)?(?:\s|$)/.test(node.attribs?.class||''))liked=true;}}
+   movies.set(url,{id:url,url,title:full.replace(/\s*\(\d{4}\)$/,''),year,poster:'',...(films?{rating,liked}:{})});
   }
-  if(element.name==='a'&&a.href&&(list?/\/list\/[\w-]+\/page\//.test(a.href):a.href.includes('/watchlist/page/'))){
+  if(element.name==='a'&&a.href&&(films?/^\/[\w-]+\/films\/page\//.test(a.href):list?/\/list\/[\w-]+\/page\//.test(a.href):a.href.includes('/watchlist/page/'))){
    const number=Number(a.href.match(/\/page\/(\d+)\//)?.[1]);if(number)pages=Math.max(pages,number);
    if((a.class||'').split(' ').includes('next'))nextPage=number;
   }
  }
  const title=textContent(getElementsByTagName('title',root,true)[0]||root);
- if(!movies.size&&!(list?/a list of films|list by/i:search?/search/i:/watchlist/i).test(title))throw Error('Letterboxd returned an unreadable page.');
+ if(!movies.size&&!(films?/films.*(?:watched|seen)|(?:watched|seen).*films/i:list?/a list of films|list by/i:search?/search/i:/watchlist/i).test(title))throw Error('Letterboxd returned an unreadable page.');
  let name='';if(list){name=elements.find(element=>element.name==='meta'&&element.attribs?.property==='og:title')?.attribs.content||'';if(!name){const heading=elements.find(element=>element.name==='h1'&&/(^|\s)title(?:-1)?(\s|$)/.test(element.attribs?.class||''));name=(heading?textContent(heading):title.replace(/^‎/,'').split(', a list of films')[0]).trim();}}
  return{movies:[...movies.values()],pages,nextPage,...(list?{name}:{})};
 }
@@ -62,4 +69,21 @@ export function parseMetadata(html){
  for(const node of getElementsByTagName('a',root,true)){const match=node.attribs.href?.match(/^\/films\/genre\/([\w-]+)\/?$/);if(match)add(match[1].replace(/-/g,' '));}
  let url=null;try{url=parsePoster(root);}catch{}
  return{runtime:parseRuntime(root),genres:[...genres],url};
+}
+export function parseFilmDetails(html){
+ const root=parseDocument(html);const elements=getElementsByTagName('*',root,true);
+ const value={...parseMetadata(html),detailsVersion:1,countries:[],languages:[],directors:[],cast:[],themes:[],nanogenres:[],averageRating:null};
+ const unique=(key,name,url)=>{name=String(name||'').trim();if(name&&!value[key].some(item=>url?item.url===url:item===name))value[key].push(url?{name,url}:name);};
+ function inspect(data){if(!data||typeof data!=='object')return;if(Array.isArray(data)){data.forEach(inspect);return;}
+  if(data['@type']==='Movie'){
+   const average=Number(data.aggregateRating?.ratingValue);if(average>=.5&&average<=5)value.averageRating=average;
+   for(const country of [].concat(data.countryOfOrigin||[]))unique('countries',typeof country==='string'?country:country.name);
+  }if(data['@graph'])inspect(data['@graph']);
+ }
+ for(const node of elements){if(node.name==='script'&&node.attribs.type==='application/ld+json')try{inspect(JSON.parse(textContent(node).replace(/\/\*[\s\S]*?\*\//g,'')));}catch{}
+  if(node.name!=='a')continue;const href=node.attribs.href||'',name=textContent(node).trim();
+  const person=href.match(/^\/(actor|director)\/[\w-]+\/$/);if(person)unique(person[1]==='actor'?'cast':'directors',name,'https://letterboxd.com'+href);
+  const tag=href.match(/^\/films\/(country|language|theme|mini-theme)\/[\w-]+\//);if(tag)unique({country:'countries',language:'languages',theme:'themes','mini-theme':'nanogenres'}[tag[1]],name);
+ }
+ return value;
 }

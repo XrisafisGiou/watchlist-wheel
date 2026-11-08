@@ -1,7 +1,57 @@
 import { randomIndex, randomSample, landingRotation, poolFor, decadeFor, eliminationTiming } from './wheel.js';
+import {renderStats} from './stats-view.js';
 const $ = id => document.getElementById(id);
 const desktop = window.desktop;
 let collection = null;
+let profileOwner = null;
+let activeTab = 'watchlist';
+let tabLoading = false;
+let statsGenerating = false;
+let ratingFilter = 'any';
+function stars(value) { return '★'.repeat(Math.floor(value)) + (value % 1 ? '½' : ''); }
+function matchesRating(movie) { return collection.view !== 'films' || ratingFilter === 'any' || (ratingFilter === 'none' ? movie.rating === null || movie.rating === undefined : Number.isFinite(movie.rating) && movie.rating >= Number($('rating-min').value) && movie.rating <= Number($('rating-max').value)); }
+function syncRating() {
+  $('rating-any').setAttribute('aria-pressed', String(ratingFilter === 'any'));
+  $('rating-none').setAttribute('aria-pressed', String(ratingFilter === 'none'));
+  $('rating-min-value').textContent = stars(Number($('rating-min').value));
+  $('rating-max-value').textContent = stars(Number($('rating-max').value));
+  $('rating-section').querySelector('summary').textContent = ratingFilter === 'none' ? 'Rating · No rating' : ratingFilter === 'range' ? `Rating · ${stars(Number($('rating-min').value))} – ${stars(Number($('rating-max').value))}` : 'Rating';
+}
+function syncProfileView() {
+  $('profile-tabs').hidden = !profileOwner;
+  for (const tab of ['watchlist','films','stats']) { const button = $('tab-'+tab); if (activeTab === tab) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current'); }
+  $('movie-workspace').hidden = activeTab === 'stats' || tabLoading;
+  $('stats-screen').hidden = activeTab !== 'stats';
+  $('add-movies').hidden = activeTab !== 'watchlist';
+  $('refresh').hidden = activeTab === 'stats' || !collection?.url;
+}
+function showCachedStats(value) {
+  $('stats-content').replaceChildren(); $('stats-intro').hidden = !!value;
+  $('stats-date').textContent = value ? 'Generated '+new Date(value.generatedAt).toLocaleString() : '';
+  $('generate-stats').textContent = value ? 'Regenerate' : 'Generate stats';
+  if (value) renderStats($('stats-content'), value);
+}
+async function switchProfileTab(tab,refresh=false) {
+  if (!profileOwner || busy || importing || gridLoading || tabLoading || (activeTab === tab && !refresh)) return;
+  tabLoading = true; setBusy(true); $('poster-warning').hidden = true;
+  try {
+    if (tab === 'stats') { const value = await invoke('userStats',profileOwner.profileId); activeTab = tab; $('stats-error').hidden = true; showCachedStats(value); }
+    else {
+      $('movie-workspace').hidden = true; $('tab-progress').hidden = false; $('tab-progress').textContent = 'Loading…';
+      const value = await invoke(tab === 'films' ? 'openUserFilms' : 'openProfile',profileOwner.profileId,refresh);
+      await openCollection(value);
+    }
+  } catch (error) { toast(error.message); }
+  finally { tabLoading = false; $('tab-progress').hidden = true; syncProfileView(); setBusy(false); updateSelection(); }
+}
+async function generateProfileStats() {
+  if (!profileOwner || busy || tabLoading || gridLoading) return;
+  statsGenerating = true; setBusy(true); $('stats-progress').hidden = false; $('stats-error').hidden = true;
+  $('stats-progress-bar').value = 0; $('stats-progress-value').textContent = '0%'; $('stats-progress-label').textContent = 'Loading films…';
+  try { showCachedStats(await invoke('generateUserStats',profileOwner.profileId)); }
+  catch (error) { $('stats-error').textContent = error.message; $('stats-error').hidden = false; }
+  finally { statsGenerating = false; $('stats-progress').hidden = true; setBusy(false); updateSelection(); }
+}
 let profiles = [];
 let deletingProfile = false;
 let pendingProfileDelete = null;
@@ -170,7 +220,7 @@ function drawWheel(canvas, movies, angle = 0) {
 }
 
 function eligibleMovies() {
-  return collection.movies.filter(movie => (maxRuntime === null || (Number.isFinite(movie.runtime) && movie.runtime > 0 && movie.runtime <= maxRuntime)) && (!appliedGenres.size || movie.genres?.some(genre => appliedGenres.has(genre))) && !movie.genres?.some(genre => appliedExcludedGenres.has(genre)) && (!appliedDecades.size || appliedDecades.has(decadeFor(movie))) && !appliedExcludedDecades.has(decadeFor(movie)));
+  return collection.movies.filter(movie => matchesRating(movie) && (maxRuntime === null || (Number.isFinite(movie.runtime) && movie.runtime > 0 && movie.runtime <= maxRuntime)) && (!appliedGenres.size || movie.genres?.some(genre => appliedGenres.has(genre))) && !movie.genres?.some(genre => appliedExcludedGenres.has(genre)) && (!appliedDecades.size || appliedDecades.has(decadeFor(movie))) && !appliedExcludedDecades.has(decadeFor(movie)));
 }
 function visibleMovies() {
   const query = $('search').value.toLocaleLowerCase().trim();
@@ -181,6 +231,11 @@ function visibleMovies() {
     const aYear = Number(a.year); const bYear = Number(b.year);
     if (!(aYear > 0) || !(bYear > 0)) return aYear > 0 ? -1 : bYear > 0 ? 1 : a.title.localeCompare(b.title);
     return aYear - bYear || a.title.localeCompare(b.title);
+  });
+  if ($('sort').value.startsWith('rating-')) movies.sort((a,b) => {
+    const aKnown = Number.isFinite(a.rating), bKnown = Number.isFinite(b.rating);
+    if (!aKnown || !bKnown) return aKnown ? -1 : bKnown ? 1 : a.title.localeCompare(b.title);
+    return (a.rating-b.rating) * ($('sort').value === 'rating-asc' ? 1 : -1) || a.title.localeCompare(b.title);
   });
   if ($('sort').value.startsWith('duration-')) movies.sort((a,b) => {
     const aKnown = Number.isFinite(a.runtime) && a.runtime > 0; const bKnown = Number.isFinite(b.runtime) && b.runtime > 0;
@@ -277,6 +332,7 @@ async function renderGrid() {
     const title = document.createElement('a'); title.className = 'movie-title'; title.textContent = movie.title; title.href = movie.url; title.target = '_blank'; title.rel = 'noopener noreferrer';
     const year = document.createElement('span'); year.className = 'movie-year'; year.textContent = movieDetails(movie);
     select.append(poster); card.append(select, title, year); fragment.append(card);
+    if (collection.view === 'films') { const rating = document.createElement('span'); rating.className = 'movie-rating'; rating.textContent = (Number.isFinite(movie.rating) ? stars(movie.rating) : 'Not rated') + (movie.liked ? ' ♥' : ''); card.append(rating); }
     if (movie.sessionOnly || collection.kind === 'manual') {
       const destination = collection.kind === 'manual' ? 'profile' : 'session';
       const remove = document.createElement('button'); remove.className = 'remove-session'; remove.textContent = '×'; remove.title = `Remove from ${destination}`; remove.setAttribute('aria-label', `Remove ${movie.title} from ${destination}`); remove.disabled = busy;
@@ -313,7 +369,8 @@ function updateSelection() {
   $('clear-selection').hidden = !selected.size;
   wheelPool = poolFor(eligibleMovies(), selected);
   $('pool-count').textContent = `${wheelPool.length} ${wheelPool.length === 1 ? 'movie' : 'movies'}`;
-  $('pool-type').textContent = selected.size ? 'Selected' : hasAppliedFilters() ? 'Filtered movies' : 'All movies';
+  $('pool-type').textContent = selected.size ? 'Selected' : hasAppliedFilters() || ratingFilter !== 'any' ? 'Filtered movies' : 'All movies';
+  for (const id of ['rating-any','rating-none','rating-range']) $(id).disabled = busy;
   $('enable-duration').disabled = busy || gridLoading;
   $('apply-runtime').disabled = (busy && !filteringRuntime) || gridLoading;
   $('clear-runtime').disabled = busy || gridLoading;
@@ -368,6 +425,13 @@ async function openCollection(value) {
   movieSearchResults = []; movieSearchSource = ''; $('movie-query').value = ''; renderMovieSearch();
   lastSpinMode = null;
   collection = value; selected = new Set(); pageNumber = 1; maxRuntime = null;
+  profileOwner = !value.kind && !value.profileIds && (value.view === 'films' || /^https:\/\/letterboxd\.com\/[\w-]+\/watchlist\/$/.test(value.url)) ? {profileId:value.profileId,username:value.username} : null;
+  activeTab = value.view === 'films' ? 'films' : 'watchlist';
+  ratingFilter = 'any'; $('rating-min').value = '.5'; $('rating-max').value = '5'; $('rating-section').open = false; $('rating-section').hidden = activeTab !== 'films'; syncRating();
+  for (const option of [...$('sort').querySelectorAll('option[data-rating]')]) option.remove();
+  if (activeTab === 'films') for (const [value,text] of [['rating-desc','Highest rated first'],['rating-asc','Lowest rated first']]) { const option = document.createElement('option'); option.value = value; option.textContent = text; option.dataset.rating = ''; $('sort').append(option); }
+  $('sort').querySelector('option[value=original]').textContent = activeTab === 'films' ? 'Films order' : 'Watchlist order';
+  syncProfileView();
   draftGenres.clear(); appliedGenres.clear(); draftExcludedGenres.clear(); appliedExcludedGenres.clear(); renderGenres();
   draftDecades.clear(); appliedDecades.clear(); draftExcludedDecades.clear(); appliedExcludedDecades.clear(); renderDecades(); $('decade-section').open = false;
   $('genre-section').open = false;
@@ -381,7 +445,7 @@ async function openCollection(value) {
   $('remove-winner-option').hidden = !['manual','list'].includes(value.kind);
   $('remove-winner').checked = !!value.removeWinner;
   $('movie-search-note').textContent = value.kind === 'manual' ? 'Saved to this profile' : 'Session only';
-  $('empty-watchlist').textContent = value.profileIds ? 'No common movies.' : value.kind === 'manual' ? 'Add movies to get started.' : value.kind === 'list' ? 'No movies left.' : 'Watchlist is empty.';
+  $('empty-watchlist').textContent = value.view === 'films' ? 'No watched films.' : value.profileIds ? 'No common movies.' : value.kind === 'manual' ? 'Add movies to get started.' : value.kind === 'list' ? 'No movies left.' : 'Watchlist is empty.';
   $('poster-warning').hidden = !value.missingPosters;
   $('poster-warning-text').textContent = value.missingPosters + ' posters unavailable.';
   resetRounds(); await renderGrid(); updateSelection();
@@ -414,6 +478,7 @@ function setBusy(value) {
   $('first-page').disabled = $('previous-page').disabled = value || gridLoading || pageNumber <= 1;
   $('last-page').disabled = $('next-page').disabled = value || gridLoading || pageNumber >= Math.ceil(visibleMovies().length / pageSize);
   $('max-runtime').disabled = value;
+  for (const id of ['tab-watchlist','tab-films','tab-stats','generate-stats','rating-any','rating-none','rating-range','refresh','add-movies','change']) $(id).disabled = value;
   $('remove-winner').disabled = value;
   $('enable-duration').disabled = value;
   $('genre-filter').disabled = value;
@@ -637,6 +702,21 @@ async function removeTemporaryMovie(movie) {
 }
 
 $('sound').addEventListener('click', () => { sound = !sound; setSound(); initAudio(); tone(660, .1); }); setSound();
+for (const tab of ['watchlist','films','stats']) $('tab-'+tab).addEventListener('click', () => switchProfileTab(tab));
+$('generate-stats').addEventListener('click', generateProfileStats);
+$('cancel-stats').addEventListener('click', () => { if (statsGenerating) invoke('cancelImport').catch(error => toast(error.message)); });
+function applyRatingFilter(value) {
+  if (busy || collection?.view !== 'films') return;
+  ratingFilter = value; syncRating();
+  const allowed = new Set(eligibleMovies().map(movie => movie.id)); selected = new Set([...selected].filter(id => allowed.has(id)));
+  pageNumber = 1; resetRounds(); renderGrid();
+}
+$('rating-any').addEventListener('click', () => applyRatingFilter('any'));
+$('rating-none').addEventListener('click', () => applyRatingFilter('none'));
+for (const id of ['rating-min','rating-max']) $(id).addEventListener('input', () => {
+  if (Number($('rating-min').value) > Number($('rating-max').value)) $(id === 'rating-min' ? 'rating-max' : 'rating-min').value = $(id).value;
+  applyRatingFilter('range');
+});
 $('home').addEventListener('click', event => { event.preventDefault(); goHome(); });
 $('change').addEventListener('click', goHome);
 $('minimize-spin').addEventListener('click', closeSpinFocus);
@@ -692,10 +772,16 @@ $('select-profiles').addEventListener('click', () => { if (importing) return; se
 $('open-common').addEventListener('click', () => { if (selectedProfiles.size >= 2) loadCollection(() => invoke('openProfiles', [...selectedProfiles])); });
 $('import-form').addEventListener('submit', event => { event.preventDefault(); loadCollection(() => invoke('importWatchlist', $('watchlist-url').value)); });
 $('csv').addEventListener('click', () => loadCollection(() => invoke('importCsv')));
-$('refresh').addEventListener('click', () => { if (busy || gridLoading) return; loadCollection(() => invoke('openProfile', collection.profileId)); });
+$('refresh').addEventListener('click', () => { if (busy || gridLoading) return; if (activeTab === 'films') switchProfileTab('films',true); else loadCollection(() => invoke('openProfile', collection.profileId)); });
 $('retry-posters').addEventListener('click', () => renderGrid());
 $('cancel-import').addEventListener('click', () => invoke('cancelImport').catch(error => toast(error.message)));
 desktop?.onProgress(value => {
+  if (value.stage?.startsWith('stats-')) {
+    const percentage = value.stage === 'stats-complete' ? 100 : value.stage === 'stats-films' ? Math.round(20*value.done/Math.max(1,value.total)) : 20+Math.round(79*value.done/Math.max(1,value.total));
+    $('stats-progress-bar').value = percentage; $('stats-progress-value').textContent = percentage+'%';
+    $('stats-progress-label').textContent = value.stage === 'stats-films' ? `Loading films · page ${value.done}/${value.total}` : value.stage === 'stats-complete' ? 'Complete' : `Loading film details · ${value.done}/${value.total}`; return;
+  }
+  if (tabLoading && value.page) { $('tab-progress').textContent = `Loading films · page ${value.page}/${value.pages}`; return; }
   if (value.stage === 'metadata') { $('runtime-status').textContent = `Loading movie data ${value.done}/${value.total}`; return; }
   $('progress-text').textContent = value.stage === 'posters' ? 'Loading posters ' + value.done + '/' + value.total : 'Loading page ' + value.page + '/' + value.pages;
 });

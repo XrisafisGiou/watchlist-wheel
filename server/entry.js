@@ -1,4 +1,4 @@
-import {watchlistUrl,listUrl,filmUrl,parsePage,parseMetadata} from './parse.js';
+import {watchlistUrl,listUrl,filmsUrl,filmUrl,parsePage,parseFilmDetails} from './parse.js';
 import {assets} from './assets.js';
 import {searchMovies} from './search.js';
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json; charset=utf-8','x-content-type-options':'nosniff','cache-control':'no-store'}});
@@ -16,22 +16,22 @@ const movieCache=new Map();const movieRequests=new Map();
 async function movieMetadata(film){
  const saved=movieCache.get(film);if(saved&&saved.expires>Date.now())return saved.value;
  if(movieRequests.has(film))return movieRequests.get(film);
- const request=html(film).then(source=>{const value=parseMetadata(source);movieCache.delete(film);movieCache.set(film,{value,expires:Date.now()+86400000});if(movieCache.size>1024)movieCache.delete(movieCache.keys().next().value);return value;}).finally(()=>movieRequests.delete(film));
+ const request=html(film).then(source=>{const value=parseFilmDetails(source);movieCache.delete(film);movieCache.set(film,{value,expires:Date.now()+86400000});if(movieCache.size>1024)movieCache.delete(movieCache.keys().next().value);return value;}).finally(()=>movieRequests.delete(film));
  movieRequests.set(film,request);return request;
 }
 async function api(request,ctx){
  const url=new URL(request.url);
 
  let response,ttl=300;
- if(url.pathname==='/api/watchlist'||url.pathname==='/api/list'){
-  const list=url.pathname==='/api/list';const base=(list?listUrl:watchlistUrl)(url.searchParams.get('url')||'');const page=Number(url.searchParams.get('page')||1);
+ if(url.pathname==='/api/watchlist'||url.pathname==='/api/list'||url.pathname==='/api/films'){
+  const list=url.pathname==='/api/list',films=url.pathname==='/api/films';const base=(films?filmsUrl:list?listUrl:watchlistUrl)(url.searchParams.get('url')||'');const page=Number(url.searchParams.get('page')||1);
   if(!Number.isInteger(page)||page<1||page>1000)throw Error('Invalid page.');
-  const parsed=parsePage(await html(page===1?base:base+'page/'+page+'/',true),false,list);
+  const parsed=parsePage(await html(page===1?base:base+'page/'+page+'/',true),false,list,films);
   response=json({...parsed,username:new URL(base).pathname.split('/')[1],url:base});ttl=0;
   response.headers.set('vercel-cdn-cache-control','no-store');response.headers.set('cdn-cache-control','no-store');
  }else if(url.pathname==='/api/search'){
   response=json(await searchMovies(url.searchParams.get('q'),target=>html(target,false,6000)));
- }else if(url.pathname==='/api/poster'||url.pathname==='/api/metadata'){
+ }else if(url.pathname==='/api/poster'||url.pathname==='/api/metadata'||url.pathname==='/api/film-details'){
   const film=filmUrl(url.searchParams.get('url')||'');const metadata=await movieMetadata(film);if(url.pathname==='/api/poster'&&!metadata.url)throw Error('No poster available.');response=json(metadata);ttl=86400;
  }else if(url.pathname==='/api/runtime'){
   const film=filmUrl(url.searchParams.get('url')||'');response=json(await movieMetadata(film));ttl=86400;

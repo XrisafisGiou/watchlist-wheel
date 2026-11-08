@@ -1,12 +1,14 @@
 import {searchMappedMovies} from './movie-search.js';
+import {readUserData,writeUserData,deleteUserData} from './user-data.js';
+import {buildStats,statsVersion} from './stats.js';
 const listeners=new Set();let active=null;let blobUrls=[];let currentCollection=null;let movieSearch=null;
 const progress=value=>listeners.forEach(listener=>listener(value));
 const database=new Promise((resolve,reject)=>{const request=indexedDB.open('watchlist-wheel',1);request.onupgradeneeded=()=>{request.result.createObjectStore('profiles',{keyPath:'profileId'});request.result.createObjectStore('artwork',{keyPath:'id'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(Error('Could not open browser storage.'));});
 async function read(store,key){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction(store);const request=key===undefined?transaction.objectStore(store).getAll():transaction.objectStore(store).get(key);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
 async function write(store,value){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction(store,'readwrite');transaction.objectStore(store).put(value);transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);});}
 async function removeProfile(id){const db=await database;return new Promise((resolve,reject)=>{const transaction=db.transaction('profiles','readwrite');transaction.objectStore('profiles').delete(id);transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);});}
-async function json(url,signal){const response=await fetch(url,{signal,cache:/^\/api\/(watchlist|list)\?/.test(url)?'no-store':'default'});const data=await response.json();if(!response.ok)throw Error(data.error||'Could not load Letterboxd.');return data;}
-async function save(value){if(value.profileIds)return value;value.profileId||=value.url||'csv:'+value.importedAt;const stored=structuredClone(value);stored.movies=stored.movies.filter(movie=>!movie.sessionOnly);stored.movies.forEach(movie=>{movie.poster=movie.posterKey||'';});await write('profiles',stored);return value;}
+async function json(url,signal){const response=await fetch(url,{signal,cache:/^\/api\/(watchlist|list|films)\?/.test(url)?'no-store':'default'});const data=await response.json();if(!response.ok)throw Error(data.error||'Could not load Letterboxd.');return data;}
+async function save(value){if(value.profileIds)return value;value.profileId||=value.url||'csv:'+value.importedAt;const stored=structuredClone(value);stored.movies=stored.movies.filter(movie=>!movie.sessionOnly);stored.movies.forEach(movie=>{movie.poster=movie.posterKey||'';});if(value.view==='films'){const cache=await readUserData(value.profileId);await writeUserData({...cache,films:stored});}else await write('profiles',stored);return value;}
 async function prepare(value,signal){
  blobUrls.forEach(url=>URL.revokeObjectURL(url));blobUrls=[];
  currentCollection=value;
@@ -62,6 +64,12 @@ async function freshProfile(id,signal){
  if(!saved.url)return saved;
  try{return saved.kind==='list'?applyListPreferences(await fetchList(saved.url,signal),saved):await fetchWatchlist(saved.url,signal);}catch(error){signal.throwIfAborted();throw Error(`Could not refresh ${saved.username}: ${error.message}`);}
 }
+async function userProfile(id){const saved=await read('profiles',id);if(!saved||saved.kind||!/^https:\/\/letterboxd\.com\/[\w-]+\/watchlist\/$/.test(saved.url))throw Error('Choose a Letterboxd user profile.');return saved;}
+async function fetchFilms(profile,signal,forStats=false){
+ const base=profile.url.replace(/watchlist\/$/,'films/'),refresh=crypto.randomUUID();const movies=new Map(),seen=new Set();let page=1;
+ while(page){signal.throwIfAborted();if(seen.has(page)||seen.size>=1000)throw Error('Unexpected films pagination.');seen.add(page);const data=await json('/api/films?url='+encodeURIComponent(base)+'&page='+page+'&refresh='+refresh,signal);data.movies.forEach(movie=>movies.set(movie.id,movie));progress(forStats?{stage:'stats-films',done:seen.size,total:data.pages}:{page:seen.size,pages:data.pages,count:movies.size});page=data.nextPage;}
+ return{profileId:profile.profileId,view:'films',url:base,username:profile.username,movies:[...movies.values()],importedAt:new Date().toISOString()};
+}
 function parseCsv(text){
  const rows=[];let row=[],field='',quoted=false;text=text.replace(/^\uFEFF/,'');
  for(let i=0;i<text.length;i++){const c=text[i];if(c==='"'){if(quoted&&text[i+1]==='"'){field+='"';i++;}else quoted=!quoted;}else if(!quoted&&(c===','||c==='\n'||c==='\r')){row.push(field);field='';if(c!==','){if(row.some(Boolean))rows.push(row);row=[];if(c==='\r'&&text[i+1]==='\n')i++;}}else field+=c;}
@@ -76,6 +84,21 @@ async function importCsv(){
 }
 const wrap=fn=>async(...args)=>{try{return{ok:true,value:await fn(...args)};}catch(error){return{ok:false,error:error.name==='AbortError'?'Loading cancelled.':error.message};}};
 window.desktop={
+ openUserFilms:wrap((id,refresh=false)=>operation(async signal=>{const profile=await userProfile(id),cache=await readUserData(id);return prepare(!refresh&&cache.films?cache.films:await fetchFilms(profile,signal),signal);})),
+ userStats:wrap(async id=>{await userProfile(id);const cache=await readUserData(id);return cache.stats?.version===statsVersion?cache.stats:null;}),
+ generateUserStats:wrap(id=>operation(async signal=>{
+  const profile=await userProfile(id),snapshot=await fetchFilms(profile,signal,true);const stored=new Map((await read('artwork')).map(value=>[value.id,value]));let next=0,done=0,failed=0;
+  progress({stage:'stats-metadata',done,total:snapshot.movies.length});
+  await Promise.all(Array.from({length:Math.min(6,snapshot.movies.length)},async()=>{while(next<snapshot.movies.length){signal.throwIfAborted();const movie=snapshot.movies[next++];try{
+   let details=stored.get(movie.id)?.details;
+   if(details?.detailsVersion!==1){for(let attempt=0;attempt<3;attempt++){try{details=await json('/api/film-details?url='+encodeURIComponent(movie.url),signal);if(details.detailsVersion!==1)throw Error('Incomplete film details.');break;}catch(error){signal.throwIfAborted();if(attempt===2)throw error;await new Promise(resolve=>setTimeout(resolve,600*(attempt+1)));}}
+    await write('artwork',{...stored.get(movie.id),id:movie.id,details,runtime:details.runtime,genres:details.genres});
+   }
+   const {url:poster,...metadata}=details;Object.assign(movie,metadata);if(poster)movie.posterKey='/api/image?url='+encodeURIComponent(poster);
+  }catch(error){signal.throwIfAborted();failed++;}progress({stage:'stats-metadata',done:++done,total:snapshot.movies.length});}}));
+  signal.throwIfAborted();if(failed)throw Error(`Could not load ${failed} films. Generate again to retry; completed movie details are cached.`);
+  const stats={...buildStats(snapshot.movies),generatedAt:new Date().toISOString()};const cache=await readUserData(id);await writeUserData({...cache,films:snapshot,stats});progress({stage:'stats-complete',done:1,total:1});return stats;
+ })),
  createManualProfile:wrap(name=>operation(async signal=>{name=String(name).trim().slice(0,80);if(!name)throw Error('Enter a profile name.');return prepare({profileId:'manual:'+crypto.randomUUID(),kind:'manual',username:name,url:'',movies:[],removeWinner:false,importedAt:new Date().toISOString()},signal);})),
  importList:wrap(input=>operation(async signal=>{const value=await fetchList(input,signal);return prepare(applyListPreferences(value,await read('profiles',value.profileId)),signal);})),
  setRemoveWinner:wrap(enabled=>operation(async()=>{if(!currentCollection||!['manual','list'].includes(currentCollection.kind)||currentCollection.profileIds)throw Error('Open a manual profile or list first.');const value={...currentCollection,removeWinner:!!enabled};await save(value);currentCollection.removeWinner=value.removeWinner;})),
@@ -118,7 +141,7 @@ window.desktop={
  loadPosters:wrap(ids=>operation(async signal=>{if(!currentCollection)throw Error('Open a profile first.');const movies=currentCollection.movies.filter(movie=>ids.includes(movie.id));const value=await preparePosters({movies},signal);await save(currentCollection);return value;})),
  importWatchlist:wrap(importWatchlist),cancelImport:wrap(()=>active?.abort()),importCsv:wrap(importCsv),
  load:wrap(async()=>(await read('profiles')).map(({profileId,username,url,kind,movies})=>({profileId,username,url,kind,count:movies.length}))),
- deleteProfile:wrap(id=>operation(async()=>{await removeProfile(id);if(currentCollection?.profileId===id)currentCollection=null;})),
+ deleteProfile:wrap(id=>operation(async()=>{await deleteUserData(id);await removeProfile(id);if(currentCollection?.profileId===id)currentCollection=null;})),
  openProfile:wrap(id=>operation(async signal=>prepare(await freshProfile(id,signal),signal))),
  openProfiles:wrap(ids=>operation(async signal=>{
   const unique=[...new Set(ids)];if(unique.length<2)throw Error('Select at least two profiles.');
